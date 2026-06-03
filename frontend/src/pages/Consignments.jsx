@@ -342,8 +342,8 @@ export default function Consignments() {
 
       {/* Create Modal */}
       {showCreate && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <form onSubmit={handleCreate} className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col animate-fade-in">
+        <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 px-4 pt-[6vh] pb-4 overflow-y-auto">
+          <form onSubmit={handleCreate} className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[88vh] flex flex-col animate-fade-in">
             {/* Header — fixed */}
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
               <div>
