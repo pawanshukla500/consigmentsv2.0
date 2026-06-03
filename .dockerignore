@@ -1,0 +1,29 @@
+node_modules
+backend/node_modules
+frontend/node_modules
+frontend/dist
+
+# NEVER include service account keys in Docker image
+backend/serviceAccountKey.json
+*firebase-adminsdk*.json
+*-adminsdk-*.json
+
+# Dev-only env files (production uses Cloud Run env vars)
+.env
+.env.local
+backend/.env
+# NOTE: frontend/.env.production IS included — it has public VITE_* Firebase config
+
+*.log
+.git
+.vscode
+.idea
+.DS_Store
+uploads
+temp
+tmp
+coverage
+run.bat
+README.md
+DEPLOYMENT.md
+AGENTS.md

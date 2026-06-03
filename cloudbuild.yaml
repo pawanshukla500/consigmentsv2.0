@@ -1,0 +1,59 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Google Cloud Build — Youthnic Packing Station
+# Triggered on push to main branch → builds Docker image → deploys to Cloud Run
+# ═══════════════════════════════════════════════════════════════════════════
+steps:
+  # Step 1: Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/youthnic-packing:$COMMIT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/youthnic-packing:latest'
+      - '.'
+    timeout: '600s'
+
+  # Step 2: Push to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/youthnic-packing:$COMMIT_SHA']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/youthnic-packing:latest']
+
+  # Step 3: Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'youthnic-packing'
+      - '--image=gcr.io/$PROJECT_ID/youthnic-packing:$COMMIT_SHA'
+      - '--platform=managed'
+      - '--region=asia-south1'
+      - '--allow-unauthenticated'
+      - '--port=8080'
+      - '--memory=1Gi'
+      - '--cpu=1'
+      - '--concurrency=80'
+      - '--timeout=300'
+      - '--min-instances=0'
+      - '--max-instances=10'
+      - '--set-env-vars=NODE_ENV=production'
+      - '--set-env-vars=FIREBASE_PROJECT_ID=consignment-packing-app'
+      - '--set-env-vars=FIREBASE_STORAGE_BUCKET=consignment-packing-app.firebasestorage.app'
+      - '--set-env-vars=MAIL_FROM_EMAIL=consignment@youthnic.shop'
+      - '--set-env-vars=MAIL_FROM_NAME=Youthnic Packing Station'
+      - '--set-env-vars=MAIL_USER_DOMAIN=youthnic.shop'
+      - '--set-env-vars=APP_URL=https://consignment.youthnic.shop'
+      # Secrets are set separately via: gcloud run services update --update-secrets
+      # JWT_SECRET and MAILERSEND_API_KEY are stored in Secret Manager
+
+images:
+  - 'gcr.io/$PROJECT_ID/youthnic-packing:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/youthnic-packing:latest'
+
+timeout: '900s'
+options:
+  machineType: 'E2_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY
