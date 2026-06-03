@@ -1,7 +1,7 @@
 /**
- * Email routes — powered by MailerSend API v1
+ * Email routes — powered by Resend API
  * All emails sent from: consignment@youthnic.shop
- * API docs: https://developers.mailersend.com/api/v1/email
+ * API docs: https://resend.com/docs/api-reference/emails/send-email
  */
 const express = require('express');
 const https   = require('https');
@@ -9,7 +9,7 @@ const router  = express.Router();
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { addAuditLog } = require('../utils/helpers');
 
-const API_KEY    = () => process.env.MAILERSEND_API_KEY || '';
+const API_KEY    = () => process.env.RESEND_API_KEY    || '';
 const FROM_EMAIL = () => process.env.MAIL_FROM_EMAIL   || 'consignment@youthnic.shop';
 const FROM_NAME  = () => process.env.MAIL_FROM_NAME    || 'Youthnic Packing Station';
 const DOMAIN     = () => process.env.MAIL_USER_DOMAIN  || 'youthnic.shop';
@@ -24,18 +24,30 @@ function nameToEmail(name) {
   return `${first}@${DOMAIN()}`;
 }
 
-/** POST to MailerSend /v1/email */
-function sendViaMailerSend(payload) {
+/**
+ * Send an email via Resend.
+ * @param {object} mail - { to, toName, subject, html, text }
+ * Resend payload format:
+ *   from: "Name <email@domain>"
+ *   to:   ["recipient@domain"]
+ */
+function sendViaResend({ to, toName, subject, html, text }) {
   return new Promise((resolve, reject) => {
-    const body = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    const payload = {
+      from:    `${FROM_NAME()} <${FROM_EMAIL()}>`,
+      to:      Array.isArray(to) ? to : [to],
+      subject,
+      ...(html ? { html } : {}),
+      ...(text ? { text } : {})
+    };
+    const body = JSON.stringify(payload);
     const options = {
-      hostname: 'api.mailersend.com',
-      path:     '/v1/email',
+      hostname: 'api.resend.com',
+      path:     '/emails',
       method:   'POST',
       headers: {
         'Content-Type':  'application/json',
         'Authorization': `Bearer ${API_KEY()}`,
-        'X-Requested-With': 'XMLHttpRequest',
         'Content-Length': Buffer.byteLength(body)
       }
     };
@@ -43,11 +55,10 @@ function sendViaMailerSend(payload) {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
-        // 202 Accepted = success for MailerSend
         if (res.statusCode >= 200 && res.statusCode < 300) {
           resolve({ statusCode: res.statusCode, body: data });
         } else {
-          reject(new Error(`MailerSend error ${res.statusCode}: ${data}`));
+          reject(new Error(`Resend error ${res.statusCode}: ${data}`));
         }
       });
     });
@@ -187,15 +198,15 @@ router.post('/send', authenticateToken, requireRole('admin'), async (req, res) =
       return res.status(400).json({ error: 'to, subject, and html/text are required.' });
     }
     if (!API_KEY()) {
-      return res.status(503).json({ error: 'MAILERSEND_API_KEY not set in .env' });
+      return res.status(503).json({ error: 'RESEND_API_KEY not set in .env' });
     }
 
-    await sendViaMailerSend({
-      from:    { email: FROM_EMAIL(), name: FROM_NAME() },
-      to:      [{ email: to, name: toName || to }],
+    await sendViaResend({
+      to,
+      toName: toName || to,
       subject,
-      html:    html || `<p>${text}</p>`,
-      text:    text || ''
+      html: html || `<p>${text}</p>`,
+      text
     });
 
     await addAuditLog('email_sent', 'email', to, req.user.id, { subject });
@@ -218,18 +229,14 @@ router.post('/welcome', authenticateToken, requireRole('admin'), async (req, res
       return res.status(400).json({ error: 'name, email, password are required.' });
     }
     if (!API_KEY()) {
-      console.warn('[Email] MAILERSEND_API_KEY not set — skipping welcome email');
+      console.warn('[Email] RESEND_API_KEY not set — skipping welcome email');
       return res.json({ ok: false, reason: 'Email not configured' });
     }
 
     const { html, text } = buildWelcomeEmail(name, email, password, role || 'user');
     const subject = `Welcome to Youthnic Packing Station — Your Login Details`;
 
-    await sendViaMailerSend({
-      from:    { email: FROM_EMAIL(), name: FROM_NAME() },
-      to:      [{ email, name }],
-      subject, html, text
-    });
+    await sendViaResend({ to: email, toName: name, subject, html, text });
 
     await addAuditLog('welcome_email_sent', 'user', email, req.user.id, { name, role });
     console.log(`[Email] Welcome email sent to ${email}`);
@@ -281,11 +288,7 @@ router.post('/notify-consignment', authenticateToken, async (req, res) => {
       </div>
     </div>`;
 
-    await sendViaMailerSend({
-      from: { email: FROM_EMAIL(), name: FROM_NAME() },
-      to:   [{ email: toEmail, name: senderName }],
-      subject, html
-    });
+    await sendViaResend({ to: toEmail, toName: senderName, subject, html });
 
     await addAuditLog('email_notification', 'consignment', consignmentId, req.user.id, { event, toEmail });
     res.json({ ok: true, to: toEmail });
