@@ -338,16 +338,18 @@ export default function Consignments() {
 
       {/* Create Modal */}
       {showCreate && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-5xl max-h-[90vh] overflow-y-auto animate-fade-in">
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <form onSubmit={handleCreate} className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col animate-fade-in my-auto">
+            {/* Header — fixed */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">Create New Consignment</h2>
                 <p className="text-xs text-slate-400 mt-0.5">Fields marked <span className="text-red-500">*</span> are required</p>
               </div>
-              <button onClick={()=>setShowCreate(false)} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"><X className="w-4 h-4" /></button>
+              <button type="button" onClick={()=>setShowCreate(false)} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"><X className="w-4 h-4" /></button>
             </div>
-            <form onSubmit={handleCreate} className="p-6 space-y-5">
+            {/* Body — scrollable */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-5">
               {/* ── Required fields ── */}
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Required Information</p>
@@ -421,12 +423,13 @@ export default function Consignments() {
                   ))}
                 </div>
               </div>
-              <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
-                <button type="button" onClick={()=>setShowCreate(false)} className="px-6 py-2.5 border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50" disabled={isSubmitting}>Cancel</button>
-                <button type="submit" disabled={isSubmitting} className="px-6 py-2.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 flex items-center gap-2">{isSubmitting&&<Loader2 className="w-4 h-4 animate-spin"/>}Create</button>
-              </div>
-            </form>
-          </div>
+            </div>{/* /scrollable body */}
+            {/* Footer — fixed */}
+            <div className="flex justify-end gap-3 px-6 py-4 border-t border-slate-100 flex-shrink-0 bg-white rounded-b-2xl">
+              <button type="button" onClick={()=>setShowCreate(false)} className="px-6 py-2.5 border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50" disabled={isSubmitting}>Cancel</button>
+              <button type="submit" disabled={isSubmitting} className="px-6 py-2.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 flex items-center gap-2">{isSubmitting&&<Loader2 className="w-4 h-4 animate-spin"/>}Create</button>
+            </div>
+          </form>
         </div>
       )}
 
