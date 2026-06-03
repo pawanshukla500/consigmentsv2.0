@@ -32,7 +32,7 @@ export default function Consignments() {
     poExpiryDate: '', appointmentDate: '', scheduledDispatchDate: '', actualDispatchDate: '', dateOfInward: '',
     forwardInvoiceNo: '', docketCompany: '', docketNo: '', marketplaceTicketId: '', shipmentStatus: 'Planned',
     unitsShipped: '', unitsReceived: '', unitsInwarded: '', qaFailExcessQty: '',
-    skus: [{ marketplaceSku: '', internalSku: '', requiredQty: '' }]
+    skus: [{ barcode: '', marketplaceSku: '', internalSku: '', requiredQty: '' }]
   });
 
   const fetchData = useCallback(async () => {
@@ -62,7 +62,8 @@ export default function Consignments() {
         unitsReceived: parseInt(form.unitsReceived) || 0,
         unitsInwarded: parseInt(form.unitsInwarded) || 0,
         qaFailExcessQty: parseInt(form.qaFailExcessQty) || 0,
-        skus: form.skus.filter(s => s.marketplaceSku || s.internalSku).map(s => ({
+        skus: form.skus.filter(s => s.barcode || s.marketplaceSku || s.internalSku).map(s => ({
+          barcode: s.barcode || s.marketplaceSku || '',
           marketplaceSku: s.marketplaceSku,
           internalSku: s.internalSku,
           requiredQty: parseInt(s.requiredQty) || 0
@@ -85,7 +86,7 @@ export default function Consignments() {
     setIsSubmitting(false);
   };
 
-  const addSku = () => setForm(prev => ({ ...prev, skus: [...prev.skus, { marketplaceSku: '', internalSku: '', requiredQty: '' }] }));
+  const addSku = () => setForm(prev => ({ ...prev, skus: [...prev.skus, { barcode: '', marketplaceSku: '', internalSku: '', requiredQty: '' }] }));
   const removeSku = (i) => setForm(prev => ({ ...prev, skus: prev.skus.filter((_, idx) => idx !== i) }));
   const updateSku = (i, field, value) => setForm(prev => { const s = [...prev.skus]; s[i][field] = value; return { ...prev, skus: s }; });
 
@@ -93,6 +94,7 @@ export default function Consignments() {
     const lines = text.trim().split(/\r?\n/);
     if (lines.length < 2) return [];
     const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+    const idxBar = headers.findIndex(h => h.toLowerCase().includes('barcode'));
     const idxMp = headers.findIndex(h => h.toLowerCase().includes('marketplace'));
     const idxInt = headers.findIndex(h => h.toLowerCase().includes('internal'));
     const idxQty = headers.findIndex(h => h.toLowerCase().includes('qty') || h.toLowerCase().includes('required'));
@@ -100,8 +102,10 @@ export default function Consignments() {
     for (let i = 1; i < lines.length; i++) {
       const cols = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
       if (!cols[0]) continue;
+      const marketplaceSku = idxMp >= 0 ? cols[idxMp] : cols[0];
       items.push({
-        marketplaceSku: idxMp >= 0 ? cols[idxMp] : cols[0],
+        barcode: idxBar >= 0 ? cols[idxBar] : marketplaceSku,
+        marketplaceSku,
         internalSku: idxInt >= 0 ? cols[idxInt] : (cols[1] || ''),
         requiredQty: idxQty >= 0 ? cols[idxQty] : (cols[2] || '0')
       });
@@ -412,12 +416,21 @@ export default function Consignments() {
                 {form.skus.length > 0 && (
                   <div className="text-xs text-slate-500 mb-2">{form.skus.length} SKU(s) loaded</div>
                 )}
-                <div className="space-y-3">
+                {/* Column headers */}
+                <div className="flex gap-3 items-center mb-1.5 px-1">
+                  <span className="flex-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Barcode (scanned)</span>
+                  <span className="flex-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Marketplace SKU</span>
+                  <span className="flex-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Internal SKU (OMS)</span>
+                  <span className="w-24 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Qty</span>
+                  {form.skus.length > 1 && <span className="w-9" />}
+                </div>
+                <div className="space-y-2.5">
                   {form.skus.map((sku,i)=> (
                     <div key={i} className="flex gap-3 items-start">
-                      <input type="text" value={sku.marketplaceSku} onChange={e=>updateSku(i,'marketplaceSku',e.target.value)} className="flex-1 px-4 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none text-sm" placeholder="SKU Details (Marketplace SKU)" />
-                      <input type="text" value={sku.internalSku} onChange={e=>updateSku(i,'internalSku',e.target.value)} className="flex-1 px-4 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none text-sm" placeholder="SKU Details Internal" />
-                      <input type="number" value={sku.requiredQty} onChange={e=>updateSku(i,'requiredQty',e.target.value)} className="w-24 px-4 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none text-sm" placeholder="Qty" min="0" />
+                      <input type="text" value={sku.barcode || ''} onChange={e=>updateSku(i,'barcode',e.target.value)} className="flex-1 px-3 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none text-sm font-mono" placeholder="Scan barcode" />
+                      <input type="text" value={sku.marketplaceSku} onChange={e=>updateSku(i,'marketplaceSku',e.target.value)} className="flex-1 px-3 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none text-sm" placeholder="Marketplace SKU" />
+                      <input type="text" value={sku.internalSku} onChange={e=>updateSku(i,'internalSku',e.target.value)} className="flex-1 px-3 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none text-sm" placeholder="Internal / OMS SKU" />
+                      <input type="number" value={sku.requiredQty} onChange={e=>updateSku(i,'requiredQty',e.target.value)} className="w-24 px-3 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none text-sm" placeholder="Qty" min="0" />
                       {form.skus.length>1 && <button type="button" onClick={()=>removeSku(i)} className="p-2.5 text-slate-400 hover:text-red-600 transition-colors"><Trash2 className="w-4 h-4" /></button>}
                     </div>
                   ))}

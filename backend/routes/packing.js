@@ -60,6 +60,7 @@ router.post('/load', authenticateToken, async (req, res) => {
 
     const skus = rawSkus.filter(Boolean).map(sku => ({
       id: sku.id,
+      barcode: sku.barcode || sku.marketplaceSku,
       marketplaceSku: sku.marketplaceSku,
       internalSku: sku.internalSku,
       required: sku.requiredQty,
@@ -77,7 +78,12 @@ router.post('/load', authenticateToken, async (req, res) => {
     session.boxes = boxes;
     session.currentBox = null;
     session.skuMap = {};
-    skus.forEach(s => { session.skuMap[s.marketplaceSku] = s; });
+    // Index by barcode, marketplaceSku AND internalSku so any code can be scanned
+    skus.forEach(s => {
+      if (s.barcode)       session.skuMap[s.barcode] = s;
+      if (s.marketplaceSku) session.skuMap[s.marketplaceSku] = s;
+      if (s.internalSku)   session.skuMap[s.internalSku] = s;
+    });
 
     const resumedBoxes = Object.keys(boxes).length;
     res.json({
@@ -102,7 +108,7 @@ router.post('/increment', authenticateToken, async (req, res) => {
     const session = getSession(consignment_id);
     if (!session.skus.length) return res.status(400).json({ error: 'No consignment loaded' });
 
-    // Find by marketplaceSku
+    // Find by any of: barcode, marketplaceSku, internalSku
     const sku = session.skuMap[barcode];
     if (!sku) return res.json({ not_found: true, barcode });
 
@@ -121,16 +127,24 @@ router.post('/increment', authenticateToken, async (req, res) => {
 
     if (!session.boxes[box_no]) session.boxes[box_no] = [];
     const boxItems = session.boxes[box_no];
-    const existing = boxItems.find(i => i.marketplaceSku === barcode);
+    // Match box item by skuId (stable) instead of scanned code
+    const existing = boxItems.find(i => i.skuId === sku.id);
     if (existing) {
       existing.qty += qty;
     } else {
-      boxItems.push({ skuId: sku.id, marketplaceSku: barcode, internalSku: sku.internalSku, name: sku.internalSku, qty });
+      boxItems.push({
+        skuId: sku.id,
+        barcode: sku.barcode,
+        marketplaceSku: sku.marketplaceSku,
+        internalSku: sku.internalSku,
+        name: sku.internalSku,
+        qty
+      });
     }
 
     res.json({
-      barcode,
-      marketplaceSku: barcode,
+      barcode: sku.barcode,
+      marketplaceSku: sku.marketplaceSku,
       internalSku: sku.internalSku,
       name: sku.internalSku,
       packed: sku.packed,

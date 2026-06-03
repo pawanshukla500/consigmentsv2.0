@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import {
   BarChart3, Boxes, Package, Clock, TrendingUp, Activity,
   User, Calendar, Download, RefreshCw, CheckCircle2, AlertCircle,
-  FileSpreadsheet, ChevronDown
+  FileSpreadsheet, ChevronDown, ChevronRight, Layers, ClipboardList, Factory
 } from 'lucide-react';
 import { productivityAPI, consignmentsAPI } from '../services/api';
 import { format, subDays, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
@@ -35,20 +36,26 @@ const Productivity = () => {
   const [activePreset,setActivePreset]= useState('Today');
   const [dateRange,   setDateRange]   = useState(PRESETS[0].getRange());
   const [lastRefresh, setLastRefresh] = useState(new Date());
+  // Production planning
+  const [planning,    setPlanning]    = useState(null);
+  const [planTab,     setPlanTab]     = useState('consignment'); // 'consignment' | 'sku'
+  const [expandedRow, setExpandedRow] = useState(null);
 
   // ── Fetch ─────────────────────────────────────────────────────────────────
   const fetchData = useCallback(async (range) => {
     try {
       setLoading(true);
       const r = range || dateRange;
-      const [prodRes, auditRes, conRes] = await Promise.all([
+      const [prodRes, auditRes, conRes, planRes] = await Promise.all([
         productivityAPI.getStats({ startDate: r.start, endDate: r.end }),
         productivityAPI.getAuditLogs({ limit: 100 }),
-        consignmentsAPI.getAll({ limit: 200 })
+        consignmentsAPI.getAll({ limit: 200 }),
+        productivityAPI.getPlanning()
       ]);
       setStats(prodRes.data);
       setAuditLogs(auditRes.data.logs || []);
       setConsignments(conRes.data.consignments || []);
+      setPlanning(planRes.data);
       setLastRefresh(new Date());
     } catch (e) {
       console.error('Productivity fetch error', e);
@@ -99,6 +106,30 @@ const Productivity = () => {
     const a   = document.createElement('a');
     a.href    = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
     a.download= `productivity_${format(new Date(), 'yyyy-MM-dd')}.csv`;
+    a.click();
+  };
+
+  const exportPlanningCsv = () => {
+    if (!planning) return;
+    let headers, rows, fname;
+    if (planTab === 'sku') {
+      headers = ['Internal SKU', 'Marketplace SKU', 'Barcode', 'Total Required', 'Total Packed', 'Total Pending', 'Pending In (Consignments)'];
+      rows = planning.bySku.map(s => [
+        s.internalSku, s.marketplaceSku, s.barcode, s.totalRequired, s.totalPacked, s.totalPending,
+        s.consignments.map(c => `${c.internalShipmentNo}(${c.pending})`).join(' | ')
+      ]);
+      fname = 'sku_pending_report';
+    } else {
+      headers = ['Consignment', 'Internal Shipment No', 'Status', 'Required', 'Packed', 'Pending', 'Pending SKUs'];
+      rows = planning.byConsignment.map(c => [
+        c.id, c.internalShipmentNo, c.status, c.required, c.packed, c.pending, c.pendingSkuCount
+      ]);
+      fname = 'consignment_pending_report';
+    }
+    const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    a.download = `${fname}_${format(new Date(), 'yyyy-MM-dd')}.csv`;
     a.click();
   };
 
@@ -187,6 +218,221 @@ const Productivity = () => {
             <p className="text-xs text-slate-500 mt-0.5">{label}</p>
           </div>
         ))}
+      </div>
+
+      {/* ═══ PRODUCTION PLANNING ═══ */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-100 mb-6 overflow-hidden">
+        {/* Section header */}
+        <div className="px-5 py-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gradient-to-r from-indigo-50/50 to-transparent">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 bg-indigo-100 rounded-xl flex items-center justify-center">
+              <Factory className="w-5 h-5 text-indigo-600" />
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-slate-900">Production Planning</h2>
+              <p className="text-[11px] text-slate-400">What's left to pack — for the production team to plan</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Sub-tab toggle */}
+            <div className="flex bg-slate-100 rounded-lg p-0.5">
+              <button onClick={() => { setPlanTab('consignment'); setExpandedRow(null); }}
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors flex items-center gap-1.5 ${planTab==='consignment'?'bg-white text-indigo-600 shadow-sm':'text-slate-500'}`}>
+                <ClipboardList className="w-3.5 h-3.5" /> By Consignment
+              </button>
+              <button onClick={() => { setPlanTab('sku'); setExpandedRow(null); }}
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors flex items-center gap-1.5 ${planTab==='sku'?'bg-white text-indigo-600 shadow-sm':'text-slate-500'}`}>
+                <Layers className="w-3.5 h-3.5" /> By SKU
+              </button>
+            </div>
+            <button onClick={exportPlanningCsv} className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-50">
+              <Download className="w-3.5 h-3.5" /> Export
+            </button>
+          </div>
+        </div>
+
+        {/* Planning summary strip */}
+        {planning && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-slate-100 border-b border-slate-100">
+            {[
+              { label: 'Open Consignments', value: planning.summary.openConsignments, color: 'text-indigo-600' },
+              { label: 'Total Pending Units', value: planning.summary.totalPendingQty?.toLocaleString(), color: 'text-amber-600' },
+              { label: 'Total Packed Units', value: planning.summary.totalPackedQty?.toLocaleString(), color: 'text-emerald-600' },
+              { label: 'Unique Pending SKUs', value: planning.summary.uniquePendingSkus, color: 'text-rose-600' },
+            ].map(s => (
+              <div key={s.label} className="bg-white px-4 py-3">
+                <p className={`text-xl font-bold ${s.color}`}>{s.value ?? 0}</p>
+                <p className="text-[10px] uppercase tracking-wider text-slate-400 mt-0.5">{s.label}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── By Consignment ── */}
+        {planTab === 'consignment' && (
+          <div className="overflow-x-auto max-h-[420px]">
+            <table className="w-full text-xs">
+              <thead className="bg-slate-50 sticky top-0 z-[1]">
+                <tr>
+                  <th className="text-left px-4 py-2.5 text-slate-500 font-semibold uppercase">Consignment</th>
+                  <th className="text-left px-3 py-2.5 text-slate-500 font-semibold uppercase">Status</th>
+                  <th className="text-right px-3 py-2.5 text-slate-500 font-semibold uppercase">Required</th>
+                  <th className="text-right px-3 py-2.5 text-slate-500 font-semibold uppercase">Packed</th>
+                  <th className="text-right px-3 py-2.5 text-slate-500 font-semibold uppercase">Pending</th>
+                  <th className="text-right px-3 py-2.5 text-slate-500 font-semibold uppercase">Pending SKUs</th>
+                  <th className="px-3 py-2.5"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {loading ? (
+                  <tr><td colSpan="7" className="py-8 text-center text-slate-400">Loading…</td></tr>
+                ) : planning?.byConsignment?.length > 0 ? planning.byConsignment.map(c => {
+                  const open = expandedRow === c.id;
+                  const skusOfC = (planning.bySku || []).map(s => {
+                    const m = s.consignments.find(x => x.id === c.id);
+                    return m ? { ...s, _c: m } : null;
+                  }).filter(Boolean);
+                  return (
+                    <React.Fragment key={c.id}>
+                      <tr className="hover:bg-indigo-50/40 cursor-pointer" onClick={() => setExpandedRow(open ? null : c.id)}>
+                        <td className="px-4 py-2.5 font-semibold text-slate-800">{c.internalShipmentNo}</td>
+                        <td className="px-3 py-2.5">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${c.status==='in_progress'?'bg-blue-100 text-blue-700':'bg-amber-100 text-amber-700'}`}>{c.status?.replace('_',' ')}</span>
+                        </td>
+                        <td className="px-3 py-2.5 text-right text-slate-600">{c.required}</td>
+                        <td className="px-3 py-2.5 text-right text-emerald-600 font-medium">{c.packed}</td>
+                        <td className="px-3 py-2.5 text-right text-amber-600 font-bold">{c.pending}</td>
+                        <td className="px-3 py-2.5 text-right text-slate-600">{c.pendingSkuCount}</td>
+                        <td className="px-3 py-2.5 text-right">
+                          <ChevronRight className={`w-4 h-4 text-slate-400 inline transition-transform ${open?'rotate-90':''}`} />
+                        </td>
+                      </tr>
+                      {open && (
+                        <tr className="bg-slate-50/60">
+                          <td colSpan="7" className="px-4 py-3">
+                            <div className="flex items-center justify-between mb-2">
+                              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Pending SKUs in {c.internalShipmentNo}</p>
+                              <Link to={`/consignments/${c.id}`} className="text-[11px] text-indigo-600 hover:underline font-medium">Open consignment →</Link>
+                            </div>
+                            {skusOfC.length > 0 ? (
+                              <div className="rounded-lg border border-slate-200 overflow-hidden bg-white">
+                                <table className="w-full text-[11px]">
+                                  <thead className="bg-slate-50"><tr>
+                                    <th className="text-left px-3 py-1.5 text-slate-400 font-semibold">Internal SKU</th>
+                                    <th className="text-left px-3 py-1.5 text-slate-400 font-semibold">Marketplace SKU</th>
+                                    <th className="text-right px-3 py-1.5 text-slate-400 font-semibold">Req</th>
+                                    <th className="text-right px-3 py-1.5 text-slate-400 font-semibold">Packed</th>
+                                    <th className="text-right px-3 py-1.5 text-slate-400 font-semibold">Pending</th>
+                                  </tr></thead>
+                                  <tbody className="divide-y divide-slate-50">
+                                    {skusOfC.map(s => (
+                                      <tr key={s.internalSku + s.marketplaceSku}>
+                                        <td className="px-3 py-1.5 font-medium text-slate-700">{s.internalSku || '—'}</td>
+                                        <td className="px-3 py-1.5 font-mono text-slate-500">{s.marketplaceSku || '—'}</td>
+                                        <td className="px-3 py-1.5 text-right text-slate-600">{s._c.required}</td>
+                                        <td className="px-3 py-1.5 text-right text-emerald-600">{s._c.packed}</td>
+                                        <td className="px-3 py-1.5 text-right text-amber-600 font-bold">{s._c.pending}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            ) : (
+                              <p className="text-[11px] text-emerald-600">✅ All SKUs fully packed in this consignment.</p>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                }) : (
+                  <tr><td colSpan="7" className="py-8 text-center text-emerald-600">🎉 No pending consignments — everything is packed!</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* ── By SKU ── */}
+        {planTab === 'sku' && (
+          <div className="overflow-x-auto max-h-[420px]">
+            <table className="w-full text-xs">
+              <thead className="bg-slate-50 sticky top-0 z-[1]">
+                <tr>
+                  <th className="text-left px-4 py-2.5 text-slate-500 font-semibold uppercase">Internal SKU (OMS)</th>
+                  <th className="text-left px-3 py-2.5 text-slate-500 font-semibold uppercase">Marketplace SKU</th>
+                  <th className="text-left px-3 py-2.5 text-slate-500 font-semibold uppercase">Barcode</th>
+                  <th className="text-right px-3 py-2.5 text-slate-500 font-semibold uppercase">Required</th>
+                  <th className="text-right px-3 py-2.5 text-slate-500 font-semibold uppercase">Packed</th>
+                  <th className="text-right px-3 py-2.5 text-slate-500 font-semibold uppercase">Pending</th>
+                  <th className="text-right px-3 py-2.5 text-slate-500 font-semibold uppercase"># Consignments</th>
+                  <th className="px-3 py-2.5"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {loading ? (
+                  <tr><td colSpan="8" className="py-8 text-center text-slate-400">Loading…</td></tr>
+                ) : planning?.bySku?.length > 0 ? planning.bySku.map((s, i) => {
+                  const key = (s.internalSku || s.marketplaceSku || s.barcode) + i;
+                  const open = expandedRow === key;
+                  return (
+                    <React.Fragment key={key}>
+                      <tr className="hover:bg-indigo-50/40 cursor-pointer" onClick={() => setExpandedRow(open ? null : key)}>
+                        <td className="px-4 py-2.5 font-semibold text-slate-800">{s.internalSku || '—'}</td>
+                        <td className="px-3 py-2.5 font-mono text-slate-500">{s.marketplaceSku || '—'}</td>
+                        <td className="px-3 py-2.5 font-mono text-slate-400">{s.barcode || '—'}</td>
+                        <td className="px-3 py-2.5 text-right text-slate-600">{s.totalRequired}</td>
+                        <td className="px-3 py-2.5 text-right text-emerald-600 font-medium">{s.totalPacked}</td>
+                        <td className="px-3 py-2.5 text-right text-amber-600 font-bold">{s.totalPending}</td>
+                        <td className="px-3 py-2.5 text-right text-slate-600">{s.consignments.length}</td>
+                        <td className="px-3 py-2.5 text-right">
+                          <ChevronRight className={`w-4 h-4 text-slate-400 inline transition-transform ${open?'rotate-90':''}`} />
+                        </td>
+                      </tr>
+                      {open && (
+                        <tr className="bg-slate-50/60">
+                          <td colSpan="8" className="px-4 py-3">
+                            <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-2">
+                              "{s.internalSku || s.marketplaceSku}" is pending in these consignments:
+                            </p>
+                            <div className="rounded-lg border border-slate-200 overflow-hidden bg-white">
+                              <table className="w-full text-[11px]">
+                                <thead className="bg-slate-50"><tr>
+                                  <th className="text-left px-3 py-1.5 text-slate-400 font-semibold">Consignment</th>
+                                  <th className="text-left px-3 py-1.5 text-slate-400 font-semibold">Status</th>
+                                  <th className="text-right px-3 py-1.5 text-slate-400 font-semibold">Req</th>
+                                  <th className="text-right px-3 py-1.5 text-slate-400 font-semibold">Packed</th>
+                                  <th className="text-right px-3 py-1.5 text-slate-400 font-semibold">Pending</th>
+                                  <th className="px-3 py-1.5"></th>
+                                </tr></thead>
+                                <tbody className="divide-y divide-slate-50">
+                                  {s.consignments.map(c => (
+                                    <tr key={c.id}>
+                                      <td className="px-3 py-1.5 font-medium text-slate-700">{c.internalShipmentNo}</td>
+                                      <td className="px-3 py-1.5">
+                                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${c.status==='in_progress'?'bg-blue-100 text-blue-700':'bg-amber-100 text-amber-700'}`}>{c.status?.replace('_',' ')}</span>
+                                      </td>
+                                      <td className="px-3 py-1.5 text-right text-slate-600">{c.required}</td>
+                                      <td className="px-3 py-1.5 text-right text-emerald-600">{c.packed}</td>
+                                      <td className="px-3 py-1.5 text-right text-amber-600 font-bold">{c.pending}</td>
+                                      <td className="px-3 py-1.5 text-right"><Link to={`/consignments/${c.id}`} className="text-indigo-600 hover:underline">Open →</Link></td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                }) : (
+                  <tr><td colSpan="8" className="py-8 text-center text-emerald-600">🎉 No pending SKUs — all packed!</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Consignment Status Overview */}

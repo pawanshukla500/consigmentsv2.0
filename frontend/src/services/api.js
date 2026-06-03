@@ -100,7 +100,8 @@ export const templatesAPI = {
 export const productivityAPI = {
   log: (data) => api.post('/productivity', data),
   getStats: (params) => api.get('/productivity', { params }),
-  getAuditLogs: (params) => api.get('/productivity/audit', { params })
+  getAuditLogs: (params) => api.get('/productivity/audit', { params }),
+  getPlanning: () => api.get('/productivity/planning')
 };
 
 // Users API

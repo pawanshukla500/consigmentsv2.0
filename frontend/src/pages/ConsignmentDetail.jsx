@@ -526,8 +526,9 @@ const ConsignmentDetail = () => {
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-slate-100">
+                    <th className="text-left text-xs font-semibold text-slate-500 uppercase py-3">Barcode</th>
                     <th className="text-left text-xs font-semibold text-slate-500 uppercase py-3">Marketplace SKU</th>
-                    <th className="text-left text-xs font-semibold text-slate-500 uppercase py-3">Internal SKU</th>
+                    <th className="text-left text-xs font-semibold text-slate-500 uppercase py-3">Internal SKU (OMS)</th>
                     <th className="text-left text-xs font-semibold text-slate-500 uppercase py-3">Required</th>
                     <th className="text-left text-xs font-semibold text-slate-500 uppercase py-3">Packed</th>
                     <th className="text-left text-xs font-semibold text-slate-500 uppercase py-3">Status</th>
@@ -538,6 +539,7 @@ const ConsignmentDetail = () => {
                   {consignment.skus?.length > 0 ? (
                     consignment.skus.map((sku) => (
                       <tr key={sku.id} className="hover:bg-slate-50">
+                        <td className="py-3 text-sm font-mono text-slate-400">{sku.barcode || sku.marketplaceSku || '—'}</td>
                         <td className="py-3 text-sm font-mono text-slate-600">{sku.marketplaceSku}</td>
                         <td className="py-3 text-sm font-medium text-slate-900">{sku.internalSku}</td>
                         <td className="py-3 text-sm text-slate-600">{sku.requiredQty}</td>
@@ -561,7 +563,7 @@ const ConsignmentDetail = () => {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan="6" className="py-8 text-center text-slate-400">No SKUs found</td>
+                      <td colSpan="7" className="py-8 text-center text-slate-400">No SKUs found</td>
                     </tr>
                   )}
                 </tbody>

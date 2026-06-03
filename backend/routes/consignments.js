@@ -144,8 +144,10 @@ router.post('/', authenticateToken, async (req, res) => {
       const skuData = {
         id: skuId,
         consignmentId: id,
-        marketplaceSku: sku.marketplaceSku || sku.barcode || '',
-        internalSku: sku.internalSku || sku.name || '',
+        // Three distinct SKU identifiers:
+        barcode:       sku.barcode || sku.marketplaceSku || '',  // physical barcode that gets scanned
+        marketplaceSku: sku.marketplaceSku || sku.barcode || '', // marketplace's SKU code
+        internalSku:   sku.internalSku || sku.name || '',        // internal / OMS SKU code
         marketplaceId: sku.marketplaceId || marketplaceId || '',
         requiredQty: parseInt(sku.requiredQty) || 0,
         packedQty: 0,

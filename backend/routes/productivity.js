@@ -111,4 +111,113 @@ router.get('/audit', authenticateToken, async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Production Planning Report
+// Aggregates all open consignments + their SKUs so the production team can plan.
+// Returns: summary, per-consignment pending/packed, and per-internal-SKU pending
+//          (with the list of consignments each SKU is pending in).
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/planning', authenticateToken, async (req, res) => {
+  try {
+    const [consignments, allSkus] = await Promise.all([
+      firestoreHelpers.getCollection('consignments'),
+      firestoreHelpers.getCollection('skus')
+    ]);
+
+    // Group SKUs by their consignment
+    const skusByConsignment = {};
+    for (const s of allSkus) {
+      if (!skusByConsignment[s.consignmentId]) skusByConsignment[s.consignmentId] = [];
+      skusByConsignment[s.consignmentId].push(s);
+    }
+
+    const byConsignment = [];
+    const bySkuMap = {};   // keyed by internalSku (fallback marketplaceSku)
+    let totalRequired = 0, totalPacked = 0, totalPending = 0, pendingConsignments = 0;
+
+    for (const c of consignments) {
+      // Only count open consignments for planning (skip completed/dispatched)
+      const isOpen = c.status === 'pending' || c.status === 'in_progress';
+      const skus = skusByConsignment[c.id] || [];
+
+      let cRequired = 0, cPacked = 0;
+      for (const s of skus) {
+        const req = s.requiredQty || 0;
+        const pkd = s.packedQty || 0;
+        const pend = Math.max(0, req - pkd);
+        cRequired += req;
+        cPacked += pkd;
+
+        if (isOpen && pend > 0) {
+          const key = s.internalSku || s.marketplaceSku || s.barcode || s.id;
+          if (!bySkuMap[key]) {
+            bySkuMap[key] = {
+              internalSku:   s.internalSku || '',
+              marketplaceSku: s.marketplaceSku || '',
+              barcode:       s.barcode || '',
+              totalRequired: 0, totalPacked: 0, totalPending: 0,
+              consignments: []
+            };
+          }
+          const entry = bySkuMap[key];
+          entry.totalRequired += req;
+          entry.totalPacked   += pkd;
+          entry.totalPending  += pend;
+          entry.consignments.push({
+            id: c.id,
+            internalShipmentNo: c.internalShipmentNo || c.id,
+            required: req, packed: pkd, pending: pend,
+            status: c.status
+          });
+        }
+      }
+
+      const cPending = Math.max(0, cRequired - cPacked);
+      if (isOpen) {
+        pendingConsignments++;
+        totalRequired += cRequired;
+        totalPacked   += cPacked;
+        totalPending  += cPending;
+        byConsignment.push({
+          id: c.id,
+          internalShipmentNo: c.internalShipmentNo || c.id,
+          marketplaceId: c.marketplaceId || '',
+          warehouse: c.warehouse || '',
+          status: c.status,
+          shipmentStatus: c.shipmentStatus || 'Planned',
+          required: cRequired,
+          packed: cPacked,
+          pending: cPending,
+          skuCount: skus.length,
+          pendingSkuCount: skus.filter(s => (s.requiredQty || 0) - (s.packedQty || 0) > 0).length,
+          expectedDate: c.expectedDate || '',
+          createdAt: c.createdAt
+        });
+      }
+    }
+
+    // Sort: most pending first
+    byConsignment.sort((a, b) => b.pending - a.pending);
+    const bySku = Object.values(bySkuMap).sort((a, b) => b.totalPending - a.totalPending);
+    bySku.forEach(s => s.consignments.sort((a, b) => b.pending - a.pending));
+
+    res.json({
+      summary: {
+        totalConsignments: consignments.length,
+        openConsignments: pendingConsignments,
+        completedConsignments: consignments.filter(c => c.status === 'completed').length,
+        totalRequiredQty: totalRequired,
+        totalPackedQty: totalPacked,
+        totalPendingQty: totalPending,
+        uniquePendingSkus: bySku.length
+      },
+      byConsignment,
+      bySku
+    });
+  } catch (error) {
+    console.error('Error building planning report:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;
