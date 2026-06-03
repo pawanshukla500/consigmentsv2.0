@@ -15,24 +15,31 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
   : process.env.NODE_ENV === 'production'
     ? [
-        'https://consignment.youthnic.shop',     // Primary custom domain
+        'https://consignment.youthnic.shop',
         'https://consignment-packing-app.web.app',
         'https://consignment-packing-app.firebaseapp.com'
       ]
     : ['http://localhost:5173', 'http://localhost:3000', 'http://127.0.0.1:5173'];
 
-// In production on Cloud Run, frontend is served from the SAME origin as the API,
-// so CORS is only needed for external cross-origin requests (Firebase SDK, etc.).
-app.use(cors({
+// CORS applied ONLY to /api/* routes — NOT to static frontend files.
+// Vite adds crossorigin="" to script tags which sends an Origin header.
+// If CORS middleware rejected it, the browser would refuse to run the JS → blank page.
+const corsMiddleware = cors({
   origin: (origin, cb) => {
-    // Allow same-origin requests (origin === undefined) and any allowed origin
-    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+    // Allow: no origin (server-to-server), same-origin, or explicit allowlist
+    if (!origin) return cb(null, true);
+    // Allow any *.run.app URL (Cloud Run preview URLs)
+    if (origin.endsWith('.run.app')) return cb(null, true);
+    if (allowedOrigins.includes(origin)) return cb(null, true);
     cb(new Error(`CORS blocked: ${origin}`));
   },
   credentials: true
-}));
+});
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Apply CORS only to API routes — static files (JS/CSS bundles) must NOT go through CORS
+app.use('/api', corsMiddleware);
 
 // Static files for uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
