@@ -1,48 +1,26 @@
 const express = require('express');
 const router = express.Router();
 const { authenticateToken } = require('../middleware/auth');
-const { generateId, now, addAuditLog, firestoreHelpers, isFirebaseAvailable } = require('../utils/helpers');
-const { db } = require('../config/firebase');
+const { generateId, now, addAuditLog, firestoreHelpers } = require('../utils/helpers');
 
-// Get all consignments — pushes filters to Firestore when available for performance
+// Get all consignments — datastore-agnostic (Postgres or Firestore via helper)
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const { status, search, marketplaceId, limit } = req.query;
     const maxLimit = limit ? Math.min(parseInt(limit) || 500, 1000) : 500;
-    let consignments;
 
-    if (isFirebaseAvailable() && !search) {
-      // Push simple equality filters to Firestore (avoids full collection scan)
-      let query = db.collection('consignments').orderBy('updatedAt', 'desc').limit(maxLimit);
-      if (status && !status.includes(',')) {
-        query = query.where('status', '==', status.trim());
-      }
-      if (marketplaceId) {
-        query = query.where('marketplaceId', '==', marketplaceId);
-      }
-      const snapshot = await query.get();
-      consignments = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    // Load all then filter/sort in Node — works identically for Postgres & Firestore
+    let consignments = await firestoreHelpers.getCollection('consignments');
 
-      // For multi-status filter, fall back to in-memory filter on the limited result
-      if (status && status.includes(',')) {
-        const statuses = status.split(',').map(s => s.trim());
-        consignments = consignments.filter(c => statuses.includes(c.status));
-      }
-    } else {
-      // Memory mode or search query — load all and filter in Node
-      consignments = await firestoreHelpers.getCollection('consignments');
-
-      if (status) {
-        const statuses = status.split(',').map(s => s.trim());
-        consignments = consignments.filter(c => statuses.includes(c.status));
-      }
-      if (marketplaceId) consignments = consignments.filter(c => c.marketplaceId === marketplaceId);
-
-      consignments.sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt));
-      consignments = consignments.slice(0, maxLimit);
+    if (status) {
+      const statuses = status.split(',').map(s => s.trim());
+      consignments = consignments.filter(c => statuses.includes(c.status));
     }
+    if (marketplaceId) consignments = consignments.filter(c => c.marketplaceId === marketplaceId);
 
-    // Search is always applied in Node (Firestore doesn't support contains)
+    consignments.sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt));
+    consignments = consignments.slice(0, maxLimit);
+
     if (search) {
       const s = search.toLowerCase();
       consignments = consignments.filter(c =>

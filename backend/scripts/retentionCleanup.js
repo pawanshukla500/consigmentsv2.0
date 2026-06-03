@@ -1,5 +1,6 @@
-const { db, bucket, firebaseInitialized } = require('../config/firebase');
+const { bucket } = require('../config/firebase');
 const { firestoreHelpers, now } = require('../utils/helpers');
+const { pgEnabled } = require('../config/database');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -13,11 +14,6 @@ async function getSettings() {
 }
 
 async function runRetentionCleanup() {
-  if (!firebaseInitialized) {
-    console.log('[Cleanup] Firebase not initialized. Skipping cleanup.');
-    return { skipped: true, reason: 'Firebase not initialized' };
-  }
-
   const settings = await getSettings();
   if (!settings.cleanupEnabled) {
     console.log('[Cleanup] Cleanup disabled in settings.');
@@ -40,18 +36,11 @@ async function runRetentionCleanup() {
     const consignmentCutoff = new Date(nowDate.getTime() - settings.consignmentRetentionDays * DAY_MS);
     console.log(`[Cleanup] Consignment cutoff: ${consignmentCutoff.toISOString()} (${settings.consignmentRetentionDays} days)`);
 
-    const consignmentSnapshot = await db.collection('consignments')
-      .where('createdAt', '<', consignmentCutoff.toISOString())
-      .get();
+    const cutoffIso = consignmentCutoff.toISOString();
+    const allConsignments = await firestoreHelpers.getCollection('consignments');
+    const consignmentData = allConsignments.filter(c => c.createdAt && c.createdAt < cutoffIso);
 
-    const consignmentIds = [];
-    const consignmentData = [];
-    consignmentSnapshot.forEach(doc => {
-      consignmentIds.push(doc.id);
-      consignmentData.push({ id: doc.id, ...doc.data() });
-    });
-
-    console.log(`[Cleanup] Found ${consignmentIds.length} old consignments`);
+    console.log(`[Cleanup] Found ${consignmentData.length} old consignments`);
 
     for (const c of consignmentData) {
       try {
