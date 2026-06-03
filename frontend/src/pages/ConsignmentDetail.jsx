@@ -113,34 +113,43 @@ const ConsignmentDetail = () => {
   const exportCsv = (type) => {
     if (!pivotData) return;
     const rows = type === 'packed'
-      ? pivotData.rows.filter(r => r.remaining === 0)
-      : pivotData.rows.filter(r => r.remaining !== 0);
+      ? pivotData.rows.filter(r => r.remaining <= 0)   // fully packed
+      : pivotData.rows.filter(r => r.remaining > 0);   // still pending
     if (rows.length === 0) { addToast(`No ${type} SKUs to export`, 'warning'); return; }
 
-    // Format: #, Marketplace SKU, Internal SKU, Required, Packed, Remaining, Box wise Qty, Box number
-    const headers = ['#', 'Marketplace SKU', 'Internal SKU', 'Required', 'Packed', 'Remaining', 'Box wise Qty', 'Box number'];
+    // Pending report focuses on what's LEFT (no packed column).
+    // Packed report shows the completed items with how they were boxed.
+    const headers = type === 'pending'
+      ? ['#', 'Marketplace SKU', 'Internal SKU', 'Required', 'Pending (to pack)']
+      : ['#', 'Marketplace SKU', 'Internal SKU', 'Required', 'Packed', 'Box wise Qty', 'Box number'];
+
     const csvRows = [headers.join(',')];
+    let totRequired = 0, totPacked = 0, totPending = 0;
+
     rows.forEach((r, i) => {
-      const boxEntries = [];
-      const boxNumbers = [];
-      pivotData.boxes.forEach(b => {
-        const qty = r.boxQtys[b.boxNo] || 0;
-        if (qty > 0) {
-          boxEntries.push(qty);
-          boxNumbers.push(b.boxNo);
-        }
-      });
-      csvRows.push([
-        i + 1,
-        `"${r.marketplaceSku}"`,
-        `"${r.internalSku}"`,
-        r.required,
-        r.packed,
-        r.remaining,
-        `"${boxEntries.join(',')}"`,
-        `"${boxNumbers.join(',')}"`
-      ].join(','));
+      totRequired += r.required; totPacked += r.packed; totPending += Math.max(0, r.remaining);
+      if (type === 'pending') {
+        csvRows.push([i + 1, `"${r.marketplaceSku}"`, `"${r.internalSku}"`, r.required, Math.max(0, r.remaining)].join(','));
+      } else {
+        const boxEntries = [], boxNumbers = [];
+        pivotData.boxes.forEach(b => {
+          const qty = r.boxQtys[b.boxNo] || 0;
+          if (qty > 0) { boxEntries.push(qty); boxNumbers.push(b.boxNo); }
+        });
+        csvRows.push([
+          i + 1, `"${r.marketplaceSku}"`, `"${r.internalSku}"`,
+          r.required, r.packed, `"${boxEntries.join(',')}"`, `"${boxNumbers.join(',')}"`
+        ].join(','));
+      }
     });
+
+    // Totals row
+    if (type === 'pending') {
+      csvRows.push(['', '', 'TOTAL', totRequired, totPending].join(','));
+    } else {
+      csvRows.push(['', '', 'TOTAL', totRequired, totPacked, '', ''].join(','));
+    }
+
     const blob = new Blob([csvRows.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

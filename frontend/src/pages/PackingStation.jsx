@@ -119,6 +119,7 @@ export default function PackingStation() {
   const inCidRef = useRef(null);
   const inBoxRef = useRef(null);
   const inSkuRef = useRef(null);
+  const uploadingQueueRef = useRef(false); // lock to prevent duplicate uploads
 
   // Theme — disabled, uses app standard theme
   useEffect(() => {
@@ -141,8 +142,12 @@ export default function PackingStation() {
   };
 
   const processVideoQueue = async (showLog = false) => {
+    // Lock: never run two uploads at once (prevents duplicate uploads of the same video)
+    if (uploadingQueueRef.current) return;
+    uploadingQueueRef.current = true;
+    try {
     const pending = await getPendingVideos();
-    if (pending.length === 0) return;
+    if (pending.length === 0) { uploadingQueueRef.current = false; return; }
     setPendingUploads(pending.length);
 
     if (showLog) {
@@ -182,6 +187,9 @@ export default function PackingStation() {
     }
     const remaining = await getQueueCount();
     setPendingUploads(remaining);
+    } finally {
+      uploadingQueueRef.current = false;
+    }
   };
 
   const checkSyncStatus = async () => {
@@ -397,7 +405,9 @@ export default function PackingStation() {
           const fileName = `${cid}_box_${box}_${Date.now()}.${ext}`;
           const metadata = { fileName, mimeType: actualType, consignmentId: cid, boxNo: box, description: `Box ${box} packing video` };
           
-          // 1. Always save to IndexedDB first (offline safety)
+          // Save to IndexedDB queue (offline safety), then upload via the SINGLE
+          // locked queue path. This prevents the duplicate-upload race where both
+          // an immediate upload and the 15s background interval uploaded the same file.
           try {
             await saveVideoToQueue(blob, metadata);
             await updatePendingCount();
@@ -405,34 +415,15 @@ export default function PackingStation() {
           } catch (dbErr) {
             console.error('[Video] IndexedDB save failed:', dbErr);
           }
-          
-          // 2. Try immediate upload
-          try {
-            setUploading(true);
-            const file = new File([blob], fileName, { type: actualType });
-            const formData = new FormData();
-            formData.append('file', file);
-            formData.append('consignmentId', cid);
-            formData.append('type', 'video');
-            formData.append('boxNo', box);
-            formData.append('description', metadata.description);
-            
-            await api.post('/uploads', formData, {
-              headers: { 'Content-Type': 'multipart/form-data' }
-            });
-            
-            // Remove from queue if immediate upload succeeded
-            const pending = await getPendingVideos();
-            const match = pending.find(v => v.metadata.fileName === fileName);
-            if (match) await markVideoUploaded(match.id);
-            await updatePendingCount();
-            
-            if (!silent) toast('Video saved to cloud ✓', 'success');
-          } catch (e) {
-            console.error('[Video] Immediate upload failed, queued for retry:', e);
-            if (!silent) toast('Video saved locally — will auto-upload when online', 'warning');
-          }
+
+          // Trigger the locked queue processor (no-op if already running)
+          setUploading(true);
+          await processVideoQueue();
           setUploading(false);
+          if (!silent) {
+            const remaining = await getQueueCount();
+            toast(remaining === 0 ? 'Video saved to cloud ✓' : 'Video queued — uploading…', remaining === 0 ? 'success' : 'info');
+          }
         }
         
         if (!silent) toast('Recording stopped', 'info');

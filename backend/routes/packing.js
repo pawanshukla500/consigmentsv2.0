@@ -238,19 +238,28 @@ router.post('/save-box', authenticateToken, async (req, res) => {
       const boxIds = new Set(consignment.boxIds || []);
       boxIds.add(boxId);
 
-      // Build boxQuantities map for each SKU from all saved boxes in session
-      const skuBoxQtys = {};
+      // ── SINGLE SOURCE OF TRUTH: physical box contents ──
+      // Build boxQuantities per SKU keyed strictly by skuId. packedQty is then
+      // DERIVED from these box contents — so packedQty, boxQuantities, box totals
+      // and consignment totals can never drift apart.
+      const skuBoxQtys = {};   // skuId -> { boxNo: qty }
       for (const [bno, items] of Object.entries(session.boxes)) {
         for (const item of items) {
-          if (!skuBoxQtys[item.skuId || item.marketplaceSku]) skuBoxQtys[item.skuId || item.marketplaceSku] = {};
-          skuBoxQtys[item.skuId || item.marketplaceSku][bno] = (skuBoxQtys[item.skuId || item.marketplaceSku][bno] || 0) + (item.qty || 0);
+          if (!item.skuId) continue;
+          if (!skuBoxQtys[item.skuId]) skuBoxQtys[item.skuId] = {};
+          skuBoxQtys[item.skuId][bno] = (skuBoxQtys[item.skuId][bno] || 0) + (item.qty || 0);
         }
       }
 
       for (const sku of session.skus) {
-        const boxQuantities = skuBoxQtys[sku.id] || skuBoxQtys[sku.marketplaceSku] || {};
+        const boxQuantities = skuBoxQtys[sku.id] || {};
+        const packedFromBoxes = Object.values(boxQuantities).reduce((a, b) => a + b, 0);
+        // Keep the in-memory session counter in sync with physical boxes
+        sku.packed = packedFromBoxes;
+        sku.remaining = Math.max(0, (sku.required || 0) - packedFromBoxes);
+        sku.status = (sku.required || 0) > 0 && packedFromBoxes >= sku.required ? 'completed' : 'pending';
         writeBatch.push(['skus', sku.id, {
-          packedQty: sku.packed,
+          packedQty: packedFromBoxes,
           boxQuantities,
           status: sku.status,
           updatedAt: now()
@@ -303,12 +312,39 @@ router.post('/finish', authenticateToken, async (req, res) => {
 
     const consignment = await firestoreHelpers.getDocument('consignments', consignment_id);
     if (consignment) {
-      // Re-calculate actual completion from Firestore SKUs
-      const allSkus = await Promise.all((consignment.skuIds || []).map(sid => firestoreHelpers.getDocument('skus', sid)));
-      const validSkus = allSkus.filter(Boolean);
+      // Re-derive everything from the PHYSICAL BOXES (single source of truth).
+      // This self-heals any drift between packedQty, boxQuantities and box totals.
+      const [allSkus, allBoxes] = await Promise.all([
+        Promise.all((consignment.skuIds || []).map(sid => firestoreHelpers.getDocument('skus', sid))),
+        Promise.all((consignment.boxIds || []).map(bid => firestoreHelpers.getDocument('boxes', bid)))
+      ]);
+      const validSkus  = allSkus.filter(Boolean);
+      const validBoxes = allBoxes.filter(Boolean);
+
+      // Sum each SKU's qty across all boxes, keyed by skuId
+      const packedBySku = {};   // skuId -> { boxNo: qty }
+      for (const box of validBoxes) {
+        for (const item of (box.items || [])) {
+          if (!item.skuId) continue;
+          if (!packedBySku[item.skuId]) packedBySku[item.skuId] = {};
+          packedBySku[item.skuId][box.boxNo] = (packedBySku[item.skuId][box.boxNo] || 0) + (item.qty || 0);
+        }
+      }
+
+      // Update each SKU to match physical boxes
+      const skuWrites = [];
+      for (const s of validSkus) {
+        const boxQuantities = packedBySku[s.id] || {};
+        const packed = Object.values(boxQuantities).reduce((a, b) => a + b, 0);
+        const status = (s.requiredQty || 0) > 0 && packed >= s.requiredQty ? 'completed' : 'pending';
+        s.packedQty = packed; s.status = status; s.boxQuantities = boxQuantities;
+        skuWrites.push(['skus', s.id, { packedQty: packed, boxQuantities, status, updatedAt: now() }]);
+      }
+      if (skuWrites.length) await firestoreHelpers.batchSetMulti(skuWrites);
+
       const totalPackedQty = validSkus.reduce((sum, s) => sum + (s.packedQty || 0), 0);
       const totalRequiredQty = validSkus.reduce((sum, s) => sum + (s.requiredQty || 0), 0);
-      const allCompleted = validSkus.every(s => s.status === 'completed');
+      const allCompleted = validSkus.length > 0 && validSkus.every(s => s.status === 'completed');
 
       const newStatus = allCompleted ? 'completed' : 'in_progress';
       await firestoreHelpers.setDocument('consignments', consignment_id, {

@@ -85,26 +85,31 @@ router.post('/', authenticateToken, upload.single('file'), async (req, res) => {
     if (bucket) {
       try {
         const storagePath = `consignments/${consignmentId}/${type}s/${fileId}_${req.file.originalname}`;
+        // Firebase download token — lets us build a public download URL WITHOUT
+        // needing signed URLs (getSignedUrl fails on Cloud Run ADC with no private key).
+        const downloadToken = generateId();
         await bucket.upload(localPath, {
           destination: storagePath,
           metadata: {
             contentType: req.file.mimetype,
             metadata: {
+              firebaseStorageDownloadTokens: downloadToken,
               originalName: req.file.originalname,
               uploadedBy: req.user.id,
               consignmentId: consignmentId || ''
             }
           }
         });
-        const fileRef = bucket.file(storagePath);
-        const [url] = await fileRef.getSignedUrl({ action: 'read', expires: '03-01-2500' });
-        firebaseUrl = url;
+        firebaseUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(storagePath)}?alt=media&token=${downloadToken}`;
         firebasePath = storagePath;
       } catch (fbError) {
-        console.error('Firebase upload error:', fbError);
+        console.error('Firebase upload error:', fbError.message);
       } finally {
         fs.unlink(localPath, () => {});
       }
+    } else {
+      console.warn('[Upload] No Firebase bucket available — file not persisted to storage');
+      fs.unlink(localPath, () => {});
     }
 
     const fileRecord = {
