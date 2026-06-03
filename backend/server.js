@@ -87,7 +87,17 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-});
+// Initialize Postgres schema (no-op if Postgres not configured), then start server
+const { initSchema, pgEnabled } = require('./config/database');
+(async () => {
+  try {
+    await initSchema();
+    if (pgEnabled()) console.log('[DB] Using PostgreSQL as primary datastore');
+  } catch (e) {
+    console.error('[DB] Schema init error:', e.message);
+  }
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  });
+})();
