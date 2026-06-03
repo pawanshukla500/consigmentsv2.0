@@ -33,10 +33,12 @@ const Layout = () => {
   const isDetail = location.pathname.match(/\/consignments\/.+/);
 
   return (
-    <div className="flex min-h-screen bg-[#f1f5f9]">
+    <div className="min-h-screen bg-[#f1f5f9]">
       <Sidebar />
 
-      <div className={`flex-1 flex flex-col transition-all duration-300 ${collapsed ? 'ml-[68px]' : 'ml-[240px]'}`}>
+      {/* Sidebar is position:fixed, so the content uses margin-left (not flex-1)
+          to avoid overflowing the viewport by the sidebar width. */}
+      <div className={`flex flex-col min-h-screen min-w-0 transition-all duration-300 ${collapsed ? 'ml-[68px]' : 'ml-[240px]'}`}>
         {/* ── Top bar ── */}
         <header className="sticky top-0 z-30 glass border-b border-slate-200/60 px-6 py-3 flex items-center justify-between">
           <div>
@@ -61,8 +63,8 @@ const Layout = () => {
         </header>
 
         {/* ── Page content ── */}
-        <main className="flex-1 p-6">
-          <div className="max-w-[1400px] mx-auto">
+        <main className="flex-1 p-4 sm:p-6 min-w-0 overflow-x-hidden">
+          <div className="max-w-[1400px] mx-auto min-w-0">
             <Outlet />
           </div>
         </main>

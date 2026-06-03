@@ -342,8 +342,8 @@ export default function Consignments() {
 
       {/* Create Modal */}
       {showCreate && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <form onSubmit={handleCreate} className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col animate-fade-in my-auto">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <form onSubmit={handleCreate} className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col animate-fade-in">
             {/* Header — fixed */}
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
               <div>
@@ -416,22 +416,24 @@ export default function Consignments() {
                 {form.skus.length > 0 && (
                   <div className="text-xs text-slate-500 mb-2">{form.skus.length} SKU(s) loaded</div>
                 )}
-                {/* Column headers */}
-                <div className="flex gap-3 items-center mb-1.5 px-1">
+                {/* Column headers — hidden on mobile (labels shown inline instead) */}
+                <div className="hidden md:flex gap-3 items-center mb-1.5 px-1">
                   <span className="flex-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Barcode (scanned)</span>
                   <span className="flex-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Marketplace SKU</span>
                   <span className="flex-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Internal SKU (OMS)</span>
                   <span className="w-24 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Qty</span>
                   {form.skus.length > 1 && <span className="w-9" />}
                 </div>
-                <div className="space-y-2.5">
+                <div className="space-y-3 md:space-y-2.5">
                   {form.skus.map((sku,i)=> (
-                    <div key={i} className="flex gap-3 items-start">
-                      <input type="text" value={sku.barcode || ''} onChange={e=>updateSku(i,'barcode',e.target.value)} className="flex-1 px-3 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none text-sm font-mono" placeholder="Scan barcode" />
+                    <div key={i} className="flex flex-col md:flex-row gap-2 md:gap-3 md:items-start border md:border-0 border-slate-100 rounded-xl p-3 md:p-0">
+                      <input type="text" value={sku.barcode || ''} onChange={e=>updateSku(i,'barcode',e.target.value)} className="flex-1 px-3 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none text-sm font-mono" placeholder="Barcode (scanned)" />
                       <input type="text" value={sku.marketplaceSku} onChange={e=>updateSku(i,'marketplaceSku',e.target.value)} className="flex-1 px-3 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none text-sm" placeholder="Marketplace SKU" />
                       <input type="text" value={sku.internalSku} onChange={e=>updateSku(i,'internalSku',e.target.value)} className="flex-1 px-3 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none text-sm" placeholder="Internal / OMS SKU" />
-                      <input type="number" value={sku.requiredQty} onChange={e=>updateSku(i,'requiredQty',e.target.value)} className="w-24 px-3 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none text-sm" placeholder="Qty" min="0" />
-                      {form.skus.length>1 && <button type="button" onClick={()=>removeSku(i)} className="p-2.5 text-slate-400 hover:text-red-600 transition-colors"><Trash2 className="w-4 h-4" /></button>}
+                      <div className="flex gap-2 items-center">
+                        <input type="number" value={sku.requiredQty} onChange={e=>updateSku(i,'requiredQty',e.target.value)} className="flex-1 md:w-24 md:flex-none px-3 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none text-sm" placeholder="Qty" min="0" />
+                        {form.skus.length>1 && <button type="button" onClick={()=>removeSku(i)} className="p-2.5 text-slate-400 hover:text-red-600 transition-colors flex-shrink-0"><Trash2 className="w-4 h-4" /></button>}
+                      </div>
                     </div>
                   ))}
                 </div>
