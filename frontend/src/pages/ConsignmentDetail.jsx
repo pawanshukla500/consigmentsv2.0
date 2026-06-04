@@ -198,7 +198,8 @@ const ConsignmentDetail = () => {
     }
   };
 
-  const printBoxLabel = (box) => {
+  // Build the 4×6 label page HTML for a single box (reused by single + bulk print)
+  const buildBoxPagesHtml = (box) => {
     const items = box.items || [];
     const totalQty = items.reduce((s, i) => s + (i.qty || 0), 0);
     const barcodeValue = `${consignment.id}-BOX-${box.boxNo}`;
@@ -272,13 +273,16 @@ const ConsignmentDetail = () => {
         </div>
       `;
     }).join('');
+    return pageHtml;
+  };
 
+  const openLabelWindow = (innerHtml, title) => {
     const w = window.open('', '_blank', 'width=600,height=800');
     w.document.write(`<!DOCTYPE html>
       <html>
         <head>
           <meta charset="utf-8">
-          <title>Box #${box.boxNo} Label</title>
+          <title>${title}</title>
           <style>
             @page { size: 4in 6in; margin: 0; }
             body { margin: 0; padding: 0; }
@@ -287,13 +291,26 @@ const ConsignmentDetail = () => {
           </style>
         </head>
         <body>
-          ${pageHtml}
+          ${innerHtml}
           <div class="no-print" style="text-align:center;padding:10px">
-            <button onclick="window.print()" style="padding:8px 20px;font-size:12px;cursor:pointer">🖨️ Print 4×6 Label</button>
+            <button onclick="window.print()" style="padding:8px 20px;font-size:12px;cursor:pointer">🖨️ Print 4×6 Labels</button>
           </div>
         </body>
       </html>`);
     w.document.close();
+  };
+
+  const printBoxLabel = (box) => {
+    openLabelWindow(buildBoxPagesHtml(box), `Box #${box.boxNo} Label`);
+  };
+
+  const printAllLabels = () => {
+    const boxes = consignment.boxes || [];
+    if (boxes.length === 0) { addToast('No boxes to print', 'warning'); return; }
+    const sorted = [...boxes].sort((a, b) => String(a.boxNo).localeCompare(String(b.boxNo), undefined, { numeric: true }));
+    const html = sorted.map(b => buildBoxPagesHtml(b)).join('');
+    openLabelWindow(html, `All Box Labels — ${consignment.internalShipmentNo || consignment.id}`);
+    addToast(`Printing ${sorted.length} box labels`, 'success');
   };
 
   const getStatusColor = (status) => {
@@ -582,6 +599,13 @@ const ConsignmentDetail = () => {
 
           {activeTab === 'boxes' && (
             <div className="space-y-4">
+              {consignment.boxes?.length > 0 && (
+                <div className="flex justify-end">
+                  <button onClick={printAllLabels} className="flex items-center gap-2 px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-700 transition-colors">
+                    <Tag className="w-4 h-4" />Print All {consignment.boxes.length} Labels
+                  </button>
+                </div>
+              )}
               {consignment.boxes?.length > 0 ? (
                 consignment.boxes.map((box) => (
                   <div key={box.id} className="border border-slate-200 rounded-lg p-4">

@@ -38,8 +38,32 @@ const corsMiddleware = cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// Cloud Run runs behind a proxy — trust it so rate-limit sees real client IPs
+app.set('trust proxy', 1);
+
 // Apply CORS only to API routes — static files (JS/CSS bundles) must NOT go through CORS
 app.use('/api', corsMiddleware);
+
+// ── Rate limiting (brute-force / abuse protection) ──
+const rateLimit = require('express-rate-limit');
+// Strict limiter for auth (login) — 10 attempts / 15 min per IP
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many login attempts. Please try again in 15 minutes.' }
+});
+// General API limiter — 300 requests / minute per IP
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please slow down.' }
+});
+app.use('/api/auth/login', authLimiter);
+app.use('/api', apiLimiter);
 
 // Static files for uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -58,6 +82,7 @@ app.use('/api/audit-logs', require('./routes/auditLogs'));
 app.use('/api/docket-companies', require('./routes/docketCompanies'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/email',   require('./routes/email'));
+app.use('/api/sku-catalog', require('./routes/skuCatalog'));
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -128,6 +128,15 @@ export const settingsAPI = {
   reconcile: () => api.post('/settings/reconcile')
 };
 
+// SKU Master Catalog API
+export const skuCatalogAPI = {
+  getAll: (params) => api.get('/sku-catalog', { params }),
+  create: (data) => api.post('/sku-catalog', data),
+  bulk: (items) => api.post('/sku-catalog/bulk', { items }),
+  update: (id, data) => api.put(`/sku-catalog/${id}`, data),
+  delete: (id) => api.delete(`/sku-catalog/${id}`)
+};
+
 // Email API (MailerSend — all from consignment@youthnic.shop)
 export const emailAPI = {
   send:               (data) => api.post('/email/send', data),

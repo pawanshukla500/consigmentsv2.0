@@ -147,6 +147,29 @@ router.post('/', authenticateToken, async (req, res) => {
     await firestoreHelpers.setDocument('consignments', id, consignmentData);
     await addAuditLog('create', 'consignment', id, req.user.id, { internalShipmentNo, skuCount: skus.length });
 
+    // Auto-populate the SKU master catalog (upsert) so SKUs are reusable later
+    try {
+      if (skus.length) {
+        const catalog = await firestoreHelpers.getCollection('skuCatalog');
+        const byInternal = new Map(catalog.filter(i => i.internalSku).map(i => [i.internalSku, i]));
+        const byBarcode = new Map(catalog.filter(i => i.barcode).map(i => [i.barcode, i]));
+        const catWrites = [];
+        for (const s of skus) {
+          const internalSku = (s.internalSku || '').trim();
+          const marketplaceSku = (s.marketplaceSku || '').trim();
+          const barcode = (s.barcode || marketplaceSku || '').trim();
+          if (!internalSku && !marketplaceSku && !barcode) continue;
+          if ((internalSku && byInternal.has(internalSku)) || (barcode && byBarcode.has(barcode))) continue;
+          const cid = generateId();
+          const item = { id: cid, barcode, marketplaceSku, internalSku, name: internalSku || marketplaceSku, createdAt: now(), updatedAt: now(), createdBy: req.user.id };
+          catWrites.push(['skuCatalog', cid, item]);
+          if (internalSku) byInternal.set(internalSku, item);
+          if (barcode) byBarcode.set(barcode, item);
+        }
+        if (catWrites.length) await firestoreHelpers.batchSetMulti(catWrites);
+      }
+    } catch (catErr) { console.warn('[Catalog] auto-populate skipped:', catErr.message); }
+
     res.status(201).json({ consignment: consignmentData });
   } catch (error) {
     res.status(500).json({ error: error.message });

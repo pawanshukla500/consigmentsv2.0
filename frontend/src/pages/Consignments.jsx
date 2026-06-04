@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Package, Plus, Search, Filter, Trash2, Eye, Download, Loader2, AlertCircle, Store, Upload, Pencil, CheckCircle2, X, FileSpreadsheet, ChevronDown, ChevronUp } from 'lucide-react';
-import { consignmentsAPI, templatesAPI, marketplacesAPI, docketCompaniesAPI } from '../services/api';
+import { consignmentsAPI, templatesAPI, marketplacesAPI, docketCompaniesAPI, skuCatalogAPI } from '../services/api';
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import { useDebounce } from '../hooks/useDebounce';
@@ -27,6 +27,7 @@ export default function Consignments() {
   const debouncedSearch = useDebounce(search, 400);
 
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [catalog, setCatalog] = useState([]);
   const [form, setForm] = useState({
     id: '', shipmentNo: '', internalShipmentNo: '', name: '', description: '', expectedDate: '', marketplaceId: '', warehouse: '',
     poExpiryDate: '', appointmentDate: '', scheduledDispatchDate: '', actualDispatchDate: '', dateOfInward: '',
@@ -52,6 +53,32 @@ export default function Consignments() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // Load SKU catalog once for autocomplete/autofill in the create form
+  useEffect(() => {
+    skuCatalogAPI.getAll().then(r => setCatalog(r.data.items || [])).catch(() => {});
+  }, []);
+
+  // When a SKU field matches a catalog entry, auto-fill the sibling fields
+  const autofillFromCatalog = (idx, field, value) => {
+    const v = (value || '').trim().toLowerCase();
+    if (!v) return;
+    const match = catalog.find(c =>
+      (field === 'barcode' && c.barcode?.toLowerCase() === v) ||
+      (field === 'marketplaceSku' && c.marketplaceSku?.toLowerCase() === v) ||
+      (field === 'internalSku' && c.internalSku?.toLowerCase() === v)
+    );
+    if (!match) return;
+    setForm(prev => {
+      const skus = [...prev.skus];
+      const cur = { ...skus[idx] };
+      if (!cur.barcode) cur.barcode = match.barcode || '';
+      if (!cur.marketplaceSku) cur.marketplaceSku = match.marketplaceSku || '';
+      if (!cur.internalSku) cur.internalSku = match.internalSku || '';
+      skus[idx] = cur;
+      return { ...prev, skus };
+    });
+  };
+
   const handleCreate = async (e) => {
     e.preventDefault();
     setIsSubmitting(true);
@@ -75,6 +102,39 @@ export default function Consignments() {
       setForm({ id: '', shipmentNo: '', internalShipmentNo: '', name: '', description: '', expectedDate: '', marketplaceId: '', warehouse: '', poExpiryDate: '', appointmentDate: '', scheduledDispatchDate: '', actualDispatchDate: '', dateOfInward: '', forwardInvoiceNo: '', docketCompany: '', docketNo: '', marketplaceTicketId: '', shipmentStatus: 'Planned', unitsShipped: '', unitsReceived: '', unitsInwarded: '', qaFailExcessQty: '', skus: [{ marketplaceSku: '', internalSku: '', requiredQty: '' }] });
       fetchData();
     } catch (error) { addToast(error.response?.data?.error || 'Failed', 'error'); }
+    setIsSubmitting(false);
+  };
+
+  // ── Bulk selection ──
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [showBulkDelete, setShowBulkDelete] = useState(false);
+  const toggleSelect = (id) => setSelectedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleSelectAll = () => setSelectedIds(prev => prev.size === consignments.length ? new Set() : new Set(consignments.map(c => c.id)));
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const bulkExport = () => {
+    const rows = consignments.filter(c => selectedIds.has(c.id));
+    if (!rows.length) return;
+    const headers = ['Consignment No','Internal Shipment No','Portal','FC Name','Planned','Packed','Pending','Pack Status','Ship Status'];
+    const csv = [headers, ...rows.map(c => [
+      c.id, c.internalShipmentNo || '', getMpName(c.marketplaceId), c.warehouse || '',
+      c.totalRequiredQty || 0, c.totalPackedQty || 0, Math.max(0,(c.totalRequiredQty||0)-(c.totalPackedQty||0)),
+      c.status || '', c.shipmentStatus || ''
+    ])].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    a.download = `selected_consignments_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    addToast(`Exported ${rows.length} consignment(s)`, 'success');
+  };
+
+  const bulkDelete = async () => {
+    setIsSubmitting(true);
+    try {
+      await Promise.all([...selectedIds].map(id => consignmentsAPI.delete(id)));
+      addToast(`Deleted ${selectedIds.size} consignment(s)`, 'success');
+      clearSelection(); setShowBulkDelete(false); fetchData();
+    } catch { addToast('Bulk delete failed', 'error'); }
     setIsSubmitting(false);
   };
 
@@ -246,11 +306,22 @@ export default function Consignments() {
         </div>
       </div>
 
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 bg-indigo-600 text-white rounded-xl px-4 py-2.5 mb-3 animate-fade-in">
+          <span className="text-sm font-semibold">{selectedIds.size} selected</span>
+          <button onClick={bulkExport} className="flex items-center gap-1.5 px-3 py-1.5 bg-white/15 hover:bg-white/25 rounded-lg text-xs font-medium transition-colors"><FileSpreadsheet className="w-3.5 h-3.5" />Export</button>
+          {isAdmin && <button onClick={() => setShowBulkDelete(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-white/15 hover:bg-red-500 rounded-lg text-xs font-medium transition-colors"><Trash2 className="w-3.5 h-3.5" />Delete</button>}
+          <button onClick={clearSelection} className="ml-auto text-xs text-white/70 hover:text-white">Clear</button>
+        </div>
+      )}
+
       <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead className="bg-slate-50"><tr>
-              <th className="text-left font-semibold text-slate-500 uppercase px-3 py-3 whitespace-nowrap sticky left-0 bg-slate-50 z-10">Consignment No</th>
+              <th className="px-3 py-3 sticky left-0 bg-slate-50 z-10"><input type="checkbox" checked={consignments.length > 0 && selectedIds.size === consignments.length} onChange={toggleSelectAll} className="w-4 h-4 rounded accent-indigo-600 cursor-pointer" /></th>
+              <th className="text-left font-semibold text-slate-500 uppercase px-3 py-3 whitespace-nowrap">Consignment No</th>
               <th className="text-left font-semibold text-slate-500 uppercase px-3 py-3 whitespace-nowrap">Internal Shipment No.</th>
               <th className="text-left font-semibold text-slate-500 uppercase px-3 py-3 whitespace-nowrap">Portal</th>
               <th className="text-left font-semibold text-slate-500 uppercase px-3 py-3 whitespace-nowrap">FC Name</th>
@@ -272,14 +343,15 @@ export default function Consignments() {
               <th className="text-right font-semibold text-slate-500 uppercase px-3 py-3 whitespace-nowrap sticky right-0 bg-slate-50 z-10">Actions</th>
             </tr></thead>
             <tbody className="divide-y divide-slate-100">
-              {loading ? <tr><td colSpan="20" className="py-12 text-center"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary-600" /></td></tr>
+              {loading ? <tr><td colSpan="21" className="py-12 text-center"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary-600" /></td></tr>
               : consignments.length > 0 ? consignments.map(c => {
                 const shortQty = (c.totalRequiredQty || 0) - (c.unitsInwarded || 0);
                 const isEditing = editingRow === c.id;
                 return (
                 <React.Fragment key={c.id}>
-                  <tr className={`hover:bg-slate-50 ${isEditing ? 'bg-primary-50/40' : ''}`}>
-                    <td className="px-3 py-3 font-medium text-slate-900 whitespace-nowrap sticky left-0 bg-white hover:bg-slate-50 z-10">{c.id}</td>
+                  <tr className={`hover:bg-slate-50 ${isEditing ? 'bg-primary-50/40' : ''} ${selectedIds.has(c.id) ? 'bg-indigo-50/40' : ''}`}>
+                    <td className="px-3 py-3 sticky left-0 bg-white z-10"><input type="checkbox" checked={selectedIds.has(c.id)} onChange={() => toggleSelect(c.id)} className="w-4 h-4 rounded accent-indigo-600 cursor-pointer" /></td>
+                    <td className="px-3 py-3 font-medium text-slate-900 whitespace-nowrap">{c.id}</td>
                     <td className="px-3 py-3 font-bold text-slate-900 whitespace-nowrap">{c.internalShipmentNo || '—'}</td>
                     <td className="px-3 py-3 whitespace-nowrap"><span className="inline-flex items-center gap-1 font-medium bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full"><Store className="w-3 h-3" />{getMpName(c.marketplaceId) || '—'}</span></td>
                     <td className="px-3 py-3 text-slate-600 whitespace-nowrap">{c.warehouse || '—'}</td>
@@ -315,7 +387,7 @@ export default function Consignments() {
                   </tr>
                   {isEditing && (
                     <tr className="bg-primary-50/30">
-                      <td colSpan="20" className="px-4 py-4">
+                      <td colSpan="21" className="px-4 py-4">
                         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
                           <div><label className="text-[10px] uppercase tracking-wider text-slate-500 block mb-1">Appointment Date</label><input type="date" value={editForm.appointmentDate || ''} onChange={e=>setEditForm({...editForm,appointmentDate:e.target.value})} className="w-full px-2 py-1.5 border border-slate-200 rounded text-sm focus:ring-2 focus:ring-primary-500 outline-none" /></div>
                           <div><label className="text-[10px] uppercase tracking-wider text-slate-500 block mb-1">Scheduled Dispatch</label><input type="date" value={editForm.scheduledDispatchDate || ''} onChange={e=>setEditForm({...editForm,scheduledDispatchDate:e.target.value})} className="w-full px-2 py-1.5 border border-slate-200 rounded text-sm focus:ring-2 focus:ring-primary-500 outline-none" /></div>
@@ -334,7 +406,7 @@ export default function Consignments() {
                     </tr>
                   )}
                 </React.Fragment>
-              )}) : <tr><td colSpan="20" className="py-12 text-center text-slate-400"><Package className="w-12 h-12 mx-auto mb-3 text-slate-300" /><p>No consignments found</p></td></tr>}
+              )}) : <tr><td colSpan="21" className="py-12 text-center text-slate-400"><Package className="w-12 h-12 mx-auto mb-3 text-slate-300" /><p>No consignments found</p></td></tr>}
             </tbody>
           </table>
         </div>
@@ -416,6 +488,10 @@ export default function Consignments() {
                 {form.skus.length > 0 && (
                   <div className="text-xs text-slate-500 mb-2">{form.skus.length} SKU(s) loaded</div>
                 )}
+                {/* Catalog autocomplete sources */}
+                <datalist id="catalog-barcodes">{catalog.filter(c=>c.barcode).map(c => <option key={c.id} value={c.barcode}>{c.internalSku}</option>)}</datalist>
+                <datalist id="catalog-mpskus">{catalog.filter(c=>c.marketplaceSku).map(c => <option key={c.id} value={c.marketplaceSku}>{c.internalSku}</option>)}</datalist>
+                <datalist id="catalog-intskus">{catalog.filter(c=>c.internalSku).map(c => <option key={c.id} value={c.internalSku}>{c.name}</option>)}</datalist>
                 {/* Column headers — hidden on mobile (labels shown inline instead) */}
                 <div className="hidden md:flex gap-3 items-center mb-1.5 px-1">
                   <span className="flex-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Barcode (scanned)</span>
@@ -427,9 +503,9 @@ export default function Consignments() {
                 <div className="space-y-3 md:space-y-2.5">
                   {form.skus.map((sku,i)=> (
                     <div key={i} className="flex flex-col md:flex-row gap-2 md:gap-3 md:items-start border md:border-0 border-slate-100 rounded-xl p-3 md:p-0">
-                      <input type="text" value={sku.barcode || ''} onChange={e=>updateSku(i,'barcode',e.target.value)} className="flex-1 px-3 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none text-sm font-mono" placeholder="Barcode (scanned)" />
-                      <input type="text" value={sku.marketplaceSku} onChange={e=>updateSku(i,'marketplaceSku',e.target.value)} className="flex-1 px-3 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none text-sm" placeholder="Marketplace SKU" />
-                      <input type="text" value={sku.internalSku} onChange={e=>updateSku(i,'internalSku',e.target.value)} className="flex-1 px-3 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none text-sm" placeholder="Internal / OMS SKU" />
+                      <input type="text" list="catalog-barcodes" value={sku.barcode || ''} onChange={e=>updateSku(i,'barcode',e.target.value)} onBlur={e=>autofillFromCatalog(i,'barcode',e.target.value)} className="flex-1 px-3 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none text-sm font-mono" placeholder="Barcode (scanned)" />
+                      <input type="text" list="catalog-mpskus" value={sku.marketplaceSku} onChange={e=>updateSku(i,'marketplaceSku',e.target.value)} onBlur={e=>autofillFromCatalog(i,'marketplaceSku',e.target.value)} className="flex-1 px-3 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none text-sm" placeholder="Marketplace SKU" />
+                      <input type="text" list="catalog-intskus" value={sku.internalSku} onChange={e=>updateSku(i,'internalSku',e.target.value)} onBlur={e=>autofillFromCatalog(i,'internalSku',e.target.value)} className="flex-1 px-3 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none text-sm" placeholder="Internal / OMS SKU" />
                       <div className="flex gap-2 items-center">
                         <input type="number" value={sku.requiredQty} onChange={e=>updateSku(i,'requiredQty',e.target.value)} className="flex-1 md:w-24 md:flex-none px-3 py-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none text-sm" placeholder="Qty" min="0" />
                         {form.skus.length>1 && <button type="button" onClick={()=>removeSku(i)} className="p-2.5 text-slate-400 hover:text-red-600 transition-colors flex-shrink-0"><Trash2 className="w-4 h-4" /></button>}
@@ -457,6 +533,20 @@ export default function Consignments() {
             <div className="flex justify-end gap-3">
               <button onClick={()=>setShowDelete(false)} className="px-6 py-2.5 border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50" disabled={isSubmitting}>Cancel</button>
               <button onClick={handleDelete} disabled={isSubmitting} className="px-6 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 flex items-center gap-2">{isSubmitting&&<Loader2 className="w-4 h-4 animate-spin"/>}Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Delete Modal */}
+      {showBulkDelete && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 animate-fade-in">
+            <div className="flex items-center gap-3 mb-4"><div className="p-3 bg-red-100 rounded-full"><AlertCircle className="w-6 h-6 text-red-600" /></div><h2 className="text-xl font-bold text-slate-900">Delete {selectedIds.size} Consignments</h2></div>
+            <p className="text-slate-600 mb-6">Permanently delete <strong>{selectedIds.size}</strong> selected consignment(s) and all their SKUs/boxes? This cannot be undone.</p>
+            <div className="flex justify-end gap-3">
+              <button onClick={()=>setShowBulkDelete(false)} className="px-6 py-2.5 border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50" disabled={isSubmitting}>Cancel</button>
+              <button onClick={bulkDelete} disabled={isSubmitting} className="px-6 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 flex items-center gap-2">{isSubmitting&&<Loader2 className="w-4 h-4 animate-spin"/>}Delete All</button>
             </div>
           </div>
         </div>

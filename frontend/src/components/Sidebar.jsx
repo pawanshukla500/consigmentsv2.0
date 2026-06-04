@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Package, BarChart3, LogOut, ScanBarcode,
   Store, Users, ClipboardList, Truck, PanelLeftClose, PanelLeftOpen,
-  Settings as SettingsIcon, ChevronRight, Shield
+  Settings as SettingsIcon, ChevronRight, Shield, Boxes
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import logo from '../assets/logo.png';
@@ -29,6 +29,7 @@ const Sidebar = () => {
         { path: '/',             icon: LayoutDashboard, label: 'Dashboard',       perm: null },
         { path: '/packing',      icon: ScanBarcode,     label: 'Packing Station', perm: 'packing' },
         { path: '/consignments', icon: Package,         label: 'Consignments',    perm: 'consignments' },
+        { path: '/sku-catalog',  icon: Boxes,           label: 'SKU Catalog',     perm: 'consignments' },
       ]
     },
     {

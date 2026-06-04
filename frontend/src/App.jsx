@@ -14,6 +14,7 @@ import Users from './pages/Users';
 import AuditLogs from './pages/AuditLogs';
 import Settings from './pages/Settings';
 import PackingStation from './pages/PackingStation';
+import SkuCatalog from './pages/SkuCatalog';
 import TermsAndConditions from './pages/TermsAndConditions';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import ContactDetails from './pages/ContactDetails';
@@ -58,6 +59,7 @@ function AppRoutes() {
         <Route index                        element={<Dashboard />} />
         <Route path="consignments"          element={<Consignments />} />
         <Route path="consignments/:id"      element={<ConsignmentDetail />} />
+        <Route path="sku-catalog"           element={<SkuCatalog />} />
         <Route path="productivity"          element={<Productivity />} />
         <Route path="marketplaces"          element={<Marketplaces />} />
         <Route path="docket-companies"      element={<DocketCompanies />} />

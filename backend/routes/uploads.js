@@ -64,9 +64,24 @@ const path = require('path');
 const fs = require('fs');
 const { bucket } = require('../config/firebase');
 
-const upload = multer({ 
+// Only allow safe, expected file types (videos, images, documents, spreadsheets)
+const ALLOWED_MIME = [
+  'video/webm', 'video/mp4', 'video/quicktime', 'video/x-msvideo',
+  'image/png', 'image/jpeg', 'image/webp', 'image/gif',
+  'application/pdf',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'text/csv', 'text/plain'
+];
+const upload = multer({
   dest: path.join(__dirname, '..', 'uploads'),
-  limits: { fileSize: 500 * 1024 * 1024 }
+  limits: { fileSize: 500 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (ALLOWED_MIME.includes(file.mimetype)) return cb(null, true);
+    cb(new Error(`File type not allowed: ${file.mimetype}`));
+  }
 });
 
 router.post('/', authenticateToken, upload.single('file'), async (req, res) => {
