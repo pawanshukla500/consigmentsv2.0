@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Settings as SettingsIcon, Save, Trash2, AlertTriangle, ChevronLeft, Loader2, Clock, Database, Play } from 'lucide-react';
+import { Settings as SettingsIcon, Save, Trash2, AlertTriangle, ChevronLeft, Loader2, Clock, Database, Play, Server, CheckCircle2, RefreshCw, ShieldCheck, HardDrive } from 'lucide-react';
 import { settingsAPI } from '../services/api';
 import { useToast } from '../context/ToastContext';
 import ConfirmModal from '../components/ConfirmModal';
@@ -14,6 +14,10 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [runningCleanup, setRunningCleanup] = useState(false);
   const [showCleanupConfirm, setShowCleanupConfirm] = useState(false);
+  const [dbInfo, setDbInfo] = useState(null);
+  const [dbLoading, setDbLoading] = useState(true);
+  const [reconciling, setReconciling] = useState(false);
+  const [reconcileResult, setReconcileResult] = useState(null);
   const [settings, setSettings] = useState({
     consignmentRetentionDays: 450,
     videoRetentionDays: 60,
@@ -23,7 +27,33 @@ export default function Settings() {
 
   useEffect(() => {
     fetchSettings();
+    fetchDbInfo();
   }, []);
+
+  const fetchDbInfo = async () => {
+    setDbLoading(true);
+    try {
+      const res = await settingsAPI.getDbInfo();
+      setDbInfo(res.data);
+    } catch (e) {
+      addToast('Failed to load database info', 'error');
+    }
+    setDbLoading(false);
+  };
+
+  const handleReconcile = async () => {
+    setReconciling(true);
+    setReconcileResult(null);
+    try {
+      const res = await settingsAPI.reconcile();
+      setReconcileResult(res.data);
+      addToast(`Reconciled ${res.data.scanned} consignments — fixed ${res.data.fixedConsignments}`, 'success');
+      fetchDbInfo();
+    } catch (e) {
+      addToast(e.response?.data?.error || 'Reconcile failed', 'error');
+    }
+    setReconciling(false);
+  };
 
   if (!isAdmin) {
     return <Navigate to="/" replace />;
@@ -92,6 +122,116 @@ export default function Settings() {
         <div className="py-12 text-center"><Loader2 className="w-8 h-8 animate-spin mx-auto text-primary-600" /></div>
       ) : (
         <div className="max-w-3xl space-y-6">
+
+          {/* ═══ DATABASE CONNECTION (admin) ═══ */}
+          <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-indigo-50 rounded-lg"><Server className="w-5 h-5 text-indigo-600" /></div>
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">Database Connection</h2>
+                  <p className="text-sm text-slate-500">Live datastore status &amp; configuration</p>
+                </div>
+              </div>
+              <button onClick={fetchDbInfo} disabled={dbLoading}
+                className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-50">
+                <RefreshCw className={`w-3.5 h-3.5 ${dbLoading ? 'animate-spin' : ''}`} /> Refresh
+              </button>
+            </div>
+            <div className="p-6">
+              {dbLoading ? (
+                <div className="py-6 text-center text-slate-400 text-sm">Loading…</div>
+              ) : dbInfo ? (
+                <>
+                  {/* Status banner */}
+                  <div className={`flex items-center gap-2 px-4 py-3 rounded-xl mb-5 ${dbInfo.connected ? 'bg-emerald-50 border border-emerald-100' : 'bg-red-50 border border-red-100'}`}>
+                    {dbInfo.connected
+                      ? <><CheckCircle2 className="w-4 h-4 text-emerald-600" /><span className="text-sm font-medium text-emerald-700">Connected — {dbInfo.datastore}</span></>
+                      : <><AlertTriangle className="w-4 h-4 text-red-600" /><span className="text-sm font-medium text-red-700">Not connected{dbInfo.error ? `: ${dbInfo.error}` : ''}</span></>}
+                  </div>
+
+                  {/* Connection details */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
+                    {[
+                      { label: 'Datastore', value: dbInfo.datastore },
+                      { label: 'Instance', value: dbInfo.instanceConnectionName || '—' },
+                      { label: 'Database', value: dbInfo.database },
+                      { label: 'User', value: dbInfo.user },
+                      { label: 'Region', value: dbInfo.region || '—' },
+                      { label: 'SSL', value: dbInfo.ssl ? 'Enabled' : 'Local' },
+                      { label: 'Server', value: dbInfo.serverVersion || '—' },
+                      { label: 'File Storage', value: dbInfo.storageBucket || '—' },
+                    ].map(item => (
+                      <div key={item.label} className="bg-slate-50 rounded-lg px-3 py-2">
+                        <p className="text-[10px] uppercase tracking-wider text-slate-400">{item.label}</p>
+                        <p className="text-sm font-medium text-slate-800 truncate font-mono">{item.value}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Record counts */}
+                  <div className="flex items-center gap-2 mb-2">
+                    <HardDrive className="w-4 h-4 text-slate-400" />
+                    <p className="text-sm font-semibold text-slate-700">Stored Records ({dbInfo.totalDocuments?.toLocaleString()} total)</p>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {Object.entries(dbInfo.counts || {}).map(([col, n]) => (
+                      <div key={col} className="bg-indigo-50/50 border border-indigo-100 rounded-lg px-3 py-2">
+                        <p className="text-lg font-bold text-indigo-700">{n}</p>
+                        <p className="text-[10px] text-slate-500 capitalize">{col}</p>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm text-slate-400 text-center py-4">Unable to load database info.</p>
+              )}
+            </div>
+          </div>
+
+          {/* ═══ DATA INTEGRITY / RECONCILE ═══ */}
+          <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center gap-3">
+              <div className="p-2 bg-emerald-50 rounded-lg"><ShieldCheck className="w-5 h-5 text-emerald-600" /></div>
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Data Integrity</h2>
+                <p className="text-sm text-slate-500">Recalculate all packed totals from physical boxes so every number matches</p>
+              </div>
+            </div>
+            <div className="p-6">
+              <div className="flex items-start gap-3 p-4 bg-indigo-50 rounded-xl border border-indigo-100 mb-4">
+                <ShieldCheck className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
+                <div className="text-sm text-indigo-800">
+                  This recomputes every SKU's packed quantity, box breakdown, and each consignment's totals
+                  <strong> directly from the saved boxes</strong> — the physical source of truth. Use it if the
+                  Packing Station, SKU list, Boxes tab, or Reports ever show different numbers. It's safe to run anytime.
+                </div>
+              </div>
+
+              {reconcileResult && (
+                <div className="mb-4 p-4 bg-slate-50 rounded-xl border border-slate-100 text-sm">
+                  <p className="font-semibold text-slate-800 mb-1">
+                    ✅ Scanned {reconcileResult.scanned} consignments — fixed {reconcileResult.fixedConsignments} consignment(s), {reconcileResult.fixedSkus} SKU(s)
+                  </p>
+                  {reconcileResult.issues?.length > 0 ? (
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-xs text-indigo-600">View {reconcileResult.issues.length} adjustments</summary>
+                      <ul className="mt-2 space-y-0.5 max-h-40 overflow-y-auto">
+                        {reconcileResult.issues.map((it, i) => <li key={i} className="text-[11px] text-slate-500 font-mono">{it}</li>)}
+                      </ul>
+                    </details>
+                  ) : <p className="text-xs text-emerald-600">All data already consistent — nothing to fix. 🎯</p>}
+                </div>
+              )}
+
+              <button onClick={handleReconcile} disabled={reconciling}
+                className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium transition-colors disabled:opacity-50">
+                {reconciling ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+                {reconciling ? 'Reconciling…' : 'Reconcile All Data'}
+              </button>
+            </div>
+          </div>
+
           {/* Retention Policy */}
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-100 flex items-center gap-3">

@@ -123,7 +123,9 @@ export const auditLogsAPI = {
 export const settingsAPI = {
   get: () => api.get('/settings'),
   update: (data) => api.put('/settings', data),
-  runCleanup: () => api.post('/settings/cleanup')
+  runCleanup: () => api.post('/settings/cleanup'),
+  getDbInfo: () => api.get('/settings/db-info'),
+  reconcile: () => api.post('/settings/reconcile')
 };
 
 // Email API (MailerSend — all from consignment@youthnic.shop)
