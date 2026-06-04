@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, Package, Box, Video, FileText, Upload, AlertCircle,
   Trash2, Download, Loader2, FileSpreadsheet, CheckCircle2,
@@ -16,10 +16,13 @@ const ConsignmentDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const { addToast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [uploading, setUploading] = useState(false);
   const [consignment, setConsignment] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('skus');
+  // Tab is synced to the URL (?tab=) so it's deep-linkable, shareable & survives refresh
+  const activeTab = searchParams.get('tab') || 'skus';
+  const setActiveTab = (tab) => setSearchParams(prev => { const p = new URLSearchParams(prev); p.set('tab', tab); return p; }, { replace: true });
   const [trackingOpen,  setTrackingOpen]  = useState(true);
   const [editingTracking, setEditingTracking] = useState(false);
   const [deleteFile, setDeleteFile] = useState(null); // { id, type, name }
@@ -516,7 +519,7 @@ const ConsignmentDetail = () => {
 
       {/* Tabs */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-100">
-        <div className="flex border-b border-slate-100 overflow-x-auto">
+        <div className="flex border-b border-slate-100 overflow-x-auto sticky top-[60px] bg-white z-20 rounded-t-xl">
           {[
             { id: 'skus', label: 'SKU Items', icon: Package },
             { id: 'boxes', label: 'Boxes', icon: Box },
@@ -655,6 +658,33 @@ const ConsignmentDetail = () => {
                   </span>
                 </div>
               </div>
+
+              {/* Report summary strip */}
+              {(() => {
+                const totReq = pivotData.rows.reduce((s, r) => s + (r.required || 0), 0);
+                const totPacked = pivotData.rows.reduce((s, r) => s + (r.packed || 0), 0);
+                const totPending = Math.max(0, totReq - totPacked);
+                const pct = totReq > 0 ? Math.round((totPacked / totReq) * 100) : 0;
+                const cards = [
+                  { label: 'Total SKUs', value: pivotData.rows.length, color: 'text-slate-900' },
+                  { label: 'Required', value: totReq, color: 'text-slate-700' },
+                  { label: 'Packed', value: totPacked, color: 'text-emerald-600' },
+                  { label: 'Pending', value: totPending, color: 'text-amber-600' },
+                  { label: 'Boxes', value: pivotData.boxes.length, color: 'text-indigo-600' },
+                  { label: 'Complete', value: `${pct}%`, color: 'text-primary-600' },
+                ];
+                return (
+                  <div className="grid grid-cols-3 md:grid-cols-6 gap-2 mb-4">
+                    {cards.map(c => (
+                      <div key={c.label} className="bg-slate-50 rounded-lg px-3 py-2 text-center">
+                        <p className={`text-lg font-bold ${c.color}`}>{c.value}</p>
+                        <p className="text-[10px] uppercase tracking-wider text-slate-400">{c.label}</p>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50">
