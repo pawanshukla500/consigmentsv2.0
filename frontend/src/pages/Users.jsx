@@ -54,8 +54,15 @@ export default function Users() {
     if (!form.name || !form.email || !form.password) return;
     setIsSubmitting(true);
     try {
-      await usersAPI.create(form);
-      addToast('User created', 'success');
+      const res = await usersAPI.create(form);
+      // Firebase emails the password-set link via your verified template,
+      // but show the link to the admin too in case it's needed for sharing.
+      if (res?.data?.inviteLink) {
+        addToast('User created — invite email sent via Firebase Auth', 'success', 5000);
+        try { await navigator.clipboard?.writeText(res.data.inviteLink); } catch (_) {}
+      } else {
+        addToast('User created', 'success');
+      }
       setShowCreate(false);
       setForm({ name: '', email: '', password: '', role: 'user', permissions: { consignments: true, packing: true, productivity: false, marketplaces: false, users: false, auditLogs: false } });
       fetchData();

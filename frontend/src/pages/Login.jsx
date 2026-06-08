@@ -11,7 +11,8 @@ const Login = () => {
   const [showPwd,     setShowPwd]     = useState(false);
   const [error,       setError]       = useState('');
   const [loading,     setLoading]     = useState(false);
-  const { login } = useAuth();
+  const [sendingReset, setSendingReset] = useState(false);
+  const { login, sendPasswordReset } = useAuth();
   const { addToast } = useToast();
   const navigate = useNavigate();
 
@@ -24,10 +25,28 @@ const Login = () => {
       addToast('Welcome back!', 'success');
       navigate('/');
     } catch (err) {
-      const msg = err.response?.data?.error || 'Invalid credentials. Please try again.';
+      const msg = err.response?.data?.error || err.message || 'Invalid credentials. Please try again.';
       setError(msg);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleForgot = async () => {
+    if (!email) { setError('Enter your email above first, then click Forgot Password.'); return; }
+    setSendingReset(true);
+    try {
+      await sendPasswordReset(email);
+      addToast(`Password reset email sent to ${email}`, 'success');
+      setError('');
+    } catch (err) {
+      const code = err?.code || '';
+      const msg = code === 'auth/user-not-found' ? 'No account with that email.' :
+                  code === 'auth/invalid-email' ? 'That email looks invalid.' :
+                  'Could not send reset email. Try again.';
+      setError(msg);
+    } finally {
+      setSendingReset(false);
     }
   };
 
@@ -128,7 +147,13 @@ const Login = () => {
             </div>
 
             <div>
-              <label className="block text-[13px] font-semibold text-slate-700 mb-1.5">Password</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-[13px] font-semibold text-slate-700">Password</label>
+                <button type="button" onClick={handleForgot} disabled={sendingReset}
+                  className="text-[12px] text-indigo-600 hover:text-indigo-700 font-medium disabled:opacity-50">
+                  {sendingReset ? 'Sending…' : 'Forgot password?'}
+                </button>
+              </div>
               <div className="relative">
                 <input type={showPwd ? 'text' : 'password'} value={password}
                   onChange={e => setPassword(e.target.value)} required
@@ -150,7 +175,7 @@ const Login = () => {
 
           <div className="mt-8 pt-6 border-t border-slate-200">
             <p className="text-[11px] text-slate-400 text-center">
-              Protected by JWT Authentication · All sessions expire in 24h
+              Secured by Firebase Authentication · noreply@youthnic.shop
             </p>
           </div>
         </div>

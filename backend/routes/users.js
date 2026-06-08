@@ -73,38 +73,27 @@ router.post('/', authenticateToken, requireRole('admin'), async (req, res) => {
     await firestoreHelpers.setDocument('users', id, userData);
     await addAuditLog('create', 'user', id, req.user.id, { name, email: normalizedEmail, role });
 
-    // Mirror into Firebase Auth (fire-and-forget — local user creation already succeeded)
-    firebaseAuth.syncUser({ id, email: normalizedEmail, name, password, disabled: false })
-      .then(r => { if (r?.created) console.log(`[FirebaseAuth] Created uid=${r.uid} for ${normalizedEmail}`); });
-
-    // Send welcome email with credentials (fire-and-forget — don't fail if email fails)
+    // Mirror into Firebase Auth — this is now the source of truth for login.
+    // The user can sign in to the frontend with this email + password via Firebase Auth.
     try {
-      const https = require('https');
-      const emailPayload = JSON.stringify({ name, email, password, role });
-      const token = req.headers['authorization']?.split(' ')[1] || '';
-      const options = {
-        hostname: 'localhost',
-        port: process.env.PORT || 5000,
-        path: '/api/email/welcome',
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-          'Content-Length': Buffer.byteLength(emailPayload)
-        }
-      };
-      // Use http for localhost (not https)
-      const http = require('http');
-      const emailReq = http.request(options, () => {});
-      emailReq.on('error', (e) => console.warn('[Users] Welcome email failed:', e.message));
-      emailReq.write(emailPayload);
-      emailReq.end();
-    } catch (emailErr) {
-      console.warn('[Users] Welcome email error:', emailErr.message);
-    }
+      const synced = await firebaseAuth.syncUser({ id, email: normalizedEmail, name, password, disabled: false });
+      if (synced?.created) console.log(`[FirebaseAuth] Created uid=${synced.uid} for ${normalizedEmail}`);
+    } catch (e) { console.warn('[Users] Firebase Auth sync failed:', e.message); }
+
+    // Generate a Firebase password-reset link so the user can set their OWN password.
+    // Firebase emails this through the template you configured (with youthnic.shop verified).
+    let inviteLink = null;
+    try {
+      const { admin, firebaseInitialized } = require('../config/firebase');
+      if (firebaseInitialized && admin?.auth) {
+        const continueUrl = (process.env.APP_URL || 'http://localhost:5173') + '/login';
+        inviteLink = await admin.auth().generatePasswordResetLink(normalizedEmail, { url: continueUrl, handleCodeInApp: false });
+        console.log(`[FirebaseAuth] Invite link generated for ${normalizedEmail}`);
+      }
+    } catch (e) { console.warn('[Users] Invite link generation failed:', e.message); }
 
     const { password: _, ...safe } = userData;
-    res.status(201).json({ user: safe });
+    res.status(201).json({ user: safe, inviteLink });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
