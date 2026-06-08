@@ -75,11 +75,21 @@ const ALLOWED_MIME = [
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'text/csv', 'text/plain'
 ];
+const SAFE_EXTENSIONS = new Set([
+  '.webm', '.mp4', '.mov', '.avi',
+  '.png', '.jpg', '.jpeg', '.webp', '.gif',
+  '.pdf', '.xls', '.xlsx', '.doc', '.docx',
+  '.csv', '.txt'
+]);
 const upload = multer({
   dest: path.join(__dirname, '..', 'uploads'),
   limits: { fileSize: 500 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (ALLOWED_MIME.includes(file.mimetype)) return cb(null, true);
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    if (file.mimetype === 'application/octet-stream' && SAFE_EXTENSIONS.has(ext)) {
+      return cb(null, true);
+    }
     cb(new Error(`File type not allowed: ${file.mimetype}`));
   }
 });

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Settings as SettingsIcon, Save, Trash2, AlertTriangle, ChevronLeft, Loader2, Clock, Database, Play, Server, CheckCircle2, RefreshCw, ShieldCheck, HardDrive } from 'lucide-react';
-import { settingsAPI } from '../services/api';
+import { settingsAPI, usersAPI } from '../services/api';
 import { useToast } from '../context/ToastContext';
 import ConfirmModal from '../components/ConfirmModal';
 
@@ -18,6 +18,9 @@ export default function Settings() {
   const [dbLoading, setDbLoading] = useState(true);
   const [reconciling, setReconciling] = useState(false);
   const [reconcileResult, setReconcileResult] = useState(null);
+  const [fbAuthEnabled, setFbAuthEnabled] = useState(null);
+  const [syncingFb, setSyncingFb] = useState(false);
+  const [fbSyncResult, setFbSyncResult] = useState(null);
   const [settings, setSettings] = useState({
     consignmentRetentionDays: 450,
     videoRetentionDays: 60,
@@ -28,7 +31,21 @@ export default function Settings() {
   useEffect(() => {
     fetchSettings();
     fetchDbInfo();
+    usersAPI.firebaseAuthStatus().then(r => setFbAuthEnabled(r.data.enabled)).catch(() => setFbAuthEnabled(false));
   }, []);
+
+  const handleFirebaseSync = async () => {
+    setSyncingFb(true);
+    setFbSyncResult(null);
+    try {
+      const res = await usersAPI.syncFirebaseAuth();
+      setFbSyncResult(res.data);
+      addToast(`Synced ${res.data.synced} user(s) — ${res.data.created} new in Firebase Auth`, 'success');
+    } catch (e) {
+      addToast(e.response?.data?.error || 'Firebase Auth sync failed', 'error');
+    }
+    setSyncingFb(false);
+  };
 
   const fetchDbInfo = async () => {
     setDbLoading(true);
@@ -228,6 +245,45 @@ export default function Settings() {
                 className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium transition-colors disabled:opacity-50">
                 {reconciling ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
                 {reconciling ? 'Reconciling…' : 'Reconcile All Data'}
+              </button>
+            </div>
+          </div>
+
+          {/* ═══ FIREBASE AUTHENTICATION ═══ */}
+          <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-amber-50 rounded-lg"><ShieldCheck className="w-5 h-5 text-amber-600" /></div>
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">Firebase Authentication</h2>
+                  <p className="text-sm text-slate-500">Mirror app users into Firebase Auth — manage them from the Firebase Console</p>
+                </div>
+              </div>
+              <span className={`px-2.5 py-1 rounded-full text-[11px] font-semibold ${fbAuthEnabled === null ? 'bg-slate-100 text-slate-500' : fbAuthEnabled ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                {fbAuthEnabled === null ? 'Checking…' : fbAuthEnabled ? 'Connected' : 'Not Available'}
+              </span>
+            </div>
+            <div className="p-6">
+              <div className="flex items-start gap-3 p-4 bg-amber-50 rounded-xl border border-amber-100 mb-4">
+                <ShieldCheck className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="text-sm text-amber-800">
+                  <p className="mb-1"><strong>What this does:</strong> New users created here are automatically mirrored into Firebase Authentication (and updated/deleted/password-changed accordingly).</p>
+                  <p className="text-xs">For <strong>existing</strong> users, click below to backfill — their accounts will be created in Firebase Auth without a password. They can use Firebase's "send password reset" to set one.</p>
+                </div>
+              </div>
+
+              {fbSyncResult && (
+                <div className="mb-4 p-4 bg-slate-50 rounded-xl border border-slate-100 text-sm">
+                  <p className="font-semibold text-slate-800">
+                    ✅ {fbSyncResult.synced}/{fbSyncResult.total} users synced — {fbSyncResult.created} newly created in Firebase Auth{fbSyncResult.failed > 0 ? ` (${fbSyncResult.failed} failed)` : ''}
+                  </p>
+                </div>
+              )}
+
+              <button onClick={handleFirebaseSync} disabled={syncingFb || !fbAuthEnabled}
+                className="flex items-center gap-2 px-5 py-2.5 bg-amber-600 text-white rounded-lg hover:bg-amber-700 text-sm font-medium transition-colors disabled:opacity-50">
+                {syncingFb ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                {syncingFb ? 'Syncing…' : 'Backfill All Users to Firebase Auth'}
               </button>
             </div>
           </div>

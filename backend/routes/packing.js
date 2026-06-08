@@ -173,11 +173,11 @@ router.post('/decrement', authenticateToken, async (req, res) => {
     sku.status = sku.remaining > 0 ? 'pending' : 'completed';
 
     if (session.boxes[box_no]) {
-      const existing = session.boxes[box_no].find(i => i.marketplaceSku === barcode);
+      const existing = session.boxes[box_no].find(i => i.skuId === sku.id);
       if (existing) {
         existing.qty -= qty;
         if (existing.qty <= 0) {
-          session.boxes[box_no] = session.boxes[box_no].filter(i => i.marketplaceSku !== barcode);
+          session.boxes[box_no] = session.boxes[box_no].filter(i => i.skuId !== sku.id);
         }
       }
     }

@@ -1,6 +1,5 @@
 const { bucket } = require('../config/firebase');
 const { firestoreHelpers, now } = require('../utils/helpers');
-const { pgEnabled } = require('../config/database');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

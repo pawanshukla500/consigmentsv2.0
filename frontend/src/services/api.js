@@ -110,7 +110,9 @@ export const usersAPI = {
   create: (data) => api.post('/users', data),
   update: (id, data) => api.put(`/users/${id}`, data),
   delete: (id) => api.delete(`/users/${id}`),
-  changePassword: (id, data) => api.post(`/users/${id}/change-password`, data)
+  changePassword: (id, data) => api.post(`/users/${id}/change-password`, data),
+  syncFirebaseAuth: () => api.post('/users/sync-firebase-auth', {}),
+  firebaseAuthStatus: () => api.get('/users/firebase-auth-status')
 };
 
 // Audit Logs API

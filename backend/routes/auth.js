@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const router = express.Router();
 const { DEFAULT_USER, JWT_SECRET } = require('../middleware/auth');
 const { firestoreHelpers, addAuditLog } = require('../utils/helpers');
+const { DEFAULT_PERMISSIONS, ensureDefaultAdminUser, normalizeEmail } = require('../utils/defaultAdmin');
 
 // Login endpoint
 router.post('/login', async (req, res) => {
@@ -13,32 +14,36 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required.' });
     }
 
-    // Check hardcoded admin first (Pawan Shukla)
-    if (email === DEFAULT_USER.email && password === DEFAULT_USER.password) {
+    const normalizedEmail = normalizeEmail(email);
+    const adminUser = await ensureDefaultAdminUser();
+
+    if (normalizedEmail === normalizeEmail(DEFAULT_USER.email)) {
+      const valid = await bcrypt.compare(password, adminUser.password);
+      if (!valid) {
+        return res.status(401).json({ error: 'Invalid email or password.' });
+      }
+
       const token = jwt.sign(
-        { id: DEFAULT_USER.id, email: DEFAULT_USER.email, name: DEFAULT_USER.name, role: DEFAULT_USER.role },
+        { id: adminUser.id, email: adminUser.email, name: adminUser.name, role: adminUser.role },
         JWT_SECRET,
         { expiresIn: '24h' }
       );
-      await addAuditLog('login', 'user', DEFAULT_USER.id, DEFAULT_USER.id, { email: DEFAULT_USER.email });
+      await addAuditLog('login', 'user', adminUser.id, adminUser.id, { email: adminUser.email });
       return res.json({
         token,
         user: {
-          id: DEFAULT_USER.id,
-          email: DEFAULT_USER.email,
-          name: DEFAULT_USER.name,
-          role: DEFAULT_USER.role,
-          permissions: {
-            consignments: true, packing: true, productivity: true,
-            marketplaces: true, users: true, auditLogs: true
-          }
+          id: adminUser.id,
+          email: adminUser.email,
+          name: adminUser.name,
+          role: adminUser.role,
+          permissions: adminUser.permissions || DEFAULT_PERMISSIONS
         }
       });
     }
 
     // Check Firestore users for non-admin users
     const users = await firestoreHelpers.getCollection('users');
-    const user = users.find(u => u.email === email);
+    const user = users.find(u => normalizeEmail(u.email) === normalizedEmail);
     if (!user) {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
@@ -84,13 +89,13 @@ router.get('/me', async (req, res) => {
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     if (decoded.id === DEFAULT_USER.id) {
+      const adminUser = await ensureDefaultAdminUser();
       return res.json({
         user: {
           ...decoded,
-          permissions: {
-            consignments: true, packing: true, productivity: true,
-            marketplaces: true, users: true, auditLogs: true
-          }
+          email: adminUser.email,
+          name: adminUser.name,
+          permissions: adminUser.permissions || DEFAULT_PERMISSIONS
         }
       });
     }

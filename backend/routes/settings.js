@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { now, firestoreHelpers, addAuditLog, generateId } = require('../utils/helpers');
-const { pgEnabled, getPool } = require('../config/database');
+const { firebaseInitialized, db, bucket } = require('../config/firebase');
 
 const DEFAULT_SETTINGS = {
   consignmentRetentionDays: 450,
@@ -76,47 +76,26 @@ router.post('/cleanup', authenticateToken, requireRole('admin'), async (req, res
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/db-info', authenticateToken, requireRole('admin'), async (req, res) => {
   try {
-    const usingPg = pgEnabled();
     const info = {
-      datastore: usingPg ? 'PostgreSQL (Google Cloud SQL)' : 'Firestore / In-memory',
-      enabled: usingPg,
-      connected: false,
-      instanceConnectionName: process.env.INSTANCE_CONNECTION_NAME || null,
-      host: process.env.NODE_ENV === 'production' && process.env.INSTANCE_CONNECTION_NAME
-        ? `/cloudsql/${process.env.INSTANCE_CONNECTION_NAME}`
-        : (process.env.DB_HOST || 'localhost'),
-      database: process.env.DB_NAME || 'postgres',
-      user: process.env.DB_USER || 'postgres',
-      region: (process.env.INSTANCE_CONNECTION_NAME || '').split(':')[1] || null,
-      ssl: process.env.NODE_ENV === 'production',
-      storageBucket: process.env.FIREBASE_STORAGE_BUCKET || null,
+      datastore: firebaseInitialized ? 'Firebase Firestore' : 'In-memory fallback',
+      enabled: firebaseInitialized,
+      connected: firebaseInitialized && Boolean(db),
+      firestore: {
+        projectId: process.env.FIREBASE_PROJECT_ID || null,
+        connected: firebaseInitialized && Boolean(db)
+      },
+      storage: {
+        bucket: process.env.FIREBASE_STORAGE_BUCKET || null,
+        connected: Boolean(bucket)
+      },
       counts: {},
       totalDocuments: 0
     };
 
-    if (usingPg) {
-      try {
-        const ver = await getPool().query('SELECT version() AS v, now() AS t');
-        info.connected = true;
-        info.serverVersion = (ver.rows[0].v || '').split(',')[0];
-        info.serverTime = ver.rows[0].t;
-
-        const counts = await getPool().query(
-          'SELECT collection, COUNT(*)::int AS n FROM documents GROUP BY collection ORDER BY collection'
-        );
-        counts.rows.forEach(r => { info.counts[r.collection] = r.n; });
-        info.totalDocuments = counts.rows.reduce((s, r) => s + r.n, 0);
-      } catch (e) {
-        info.connected = false;
-        info.error = e.message;
-      }
-    } else {
-      // Firestore/memory counts
-      for (const col of ['consignments', 'skus', 'boxes', 'videos', 'documents', 'users', 'marketplaces', 'docketCompanies', 'auditLogs', 'productivity']) {
-        try { info.counts[col] = (await firestoreHelpers.getCollection(col)).length; } catch { info.counts[col] = 0; }
-      }
-      info.totalDocuments = Object.values(info.counts).reduce((s, n) => s + n, 0);
+    for (const col of ['consignments', 'skus', 'boxes', 'videos', 'documents', 'users', 'marketplaces', 'docketCompanies', 'auditLogs', 'productivity']) {
+      try { info.counts[col] = (await firestoreHelpers.getCollection(col)).length; } catch { info.counts[col] = 0; }
     }
+    info.totalDocuments = Object.values(info.counts).reduce((s, n) => s + n, 0);
 
     res.json(info);
   } catch (error) {
