@@ -4,6 +4,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
 const path = require('path');
+const { pgEnabled, initSchema } = require('./config/database');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -112,7 +113,10 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  if (pgEnabled()) {
+    await initSchema();
+  }
 });

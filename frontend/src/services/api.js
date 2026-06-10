@@ -127,7 +127,8 @@ export const settingsAPI = {
   update: (data) => api.put('/settings', data),
   runCleanup: () => api.post('/settings/cleanup'),
   getDbInfo: () => api.get('/settings/db-info'),
-  reconcile: () => api.post('/settings/reconcile')
+  reconcile: () => api.post('/settings/reconcile'),
+  migrateToPostgres: () => api.post('/settings/migrate-to-postgres')
 };
 
 // SKU Master Catalog API

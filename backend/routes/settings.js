@@ -3,6 +3,8 @@ const router = express.Router();
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { now, firestoreHelpers, addAuditLog, generateId } = require('../utils/helpers');
 const { firebaseInitialized, db, bucket } = require('../config/firebase');
+const { pgEnabled, getPool } = require('../config/database');
+const pgHelpers = require('../utils/pgHelpers');
 
 const DEFAULT_SETTINGS = {
   consignmentRetentionDays: 450,
@@ -76,26 +78,48 @@ router.post('/cleanup', authenticateToken, requireRole('admin'), async (req, res
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/db-info', authenticateToken, requireRole('admin'), async (req, res) => {
   try {
+    const usingPg = pgEnabled();
     const info = {
-      datastore: firebaseInitialized ? 'Firebase Firestore' : 'In-memory fallback',
-      enabled: firebaseInitialized,
-      connected: firebaseInitialized && Boolean(db),
-      firestore: {
-        projectId: process.env.FIREBASE_PROJECT_ID || null,
-        connected: firebaseInitialized && Boolean(db)
-      },
-      storage: {
-        bucket: process.env.FIREBASE_STORAGE_BUCKET || null,
-        connected: Boolean(bucket)
-      },
+      datastore: usingPg ? 'PostgreSQL (Google Cloud SQL)' : (firebaseInitialized ? 'Firebase Firestore' : 'In-memory fallback'),
+      enabled: usingPg || firebaseInitialized,
+      connected: false,
+      instanceConnectionName: process.env.INSTANCE_CONNECTION_NAME || null,
+      host: process.env.NODE_ENV === 'production' && process.env.INSTANCE_CONNECTION_NAME
+        ? `/cloudsql/${process.env.INSTANCE_CONNECTION_NAME}`
+        : (process.env.DB_HOST || 'localhost'),
+      database: process.env.DB_NAME || 'postgres',
+      user: process.env.DB_USER || 'postgres',
+      region: (process.env.INSTANCE_CONNECTION_NAME || '').split(':')[1] || null,
+      ssl: process.env.NODE_ENV === 'production' || process.env.DB_SSL === 'true',
+      storageBucket: process.env.FIREBASE_STORAGE_BUCKET || null,
       counts: {},
       totalDocuments: 0
     };
 
-    for (const col of ['consignments', 'skus', 'boxes', 'videos', 'documents', 'users', 'marketplaces', 'docketCompanies', 'auditLogs', 'productivity']) {
-      try { info.counts[col] = (await firestoreHelpers.getCollection(col)).length; } catch { info.counts[col] = 0; }
+    if (usingPg) {
+      try {
+        const ver = await getPool().query('SELECT version() AS v, now() AS t');
+        info.connected = true;
+        info.serverVersion = (ver.rows[0].v || '').split(',')[0];
+        info.serverTime = ver.rows[0].t;
+
+        const counts = await getPool().query(
+          'SELECT collection, COUNT(*)::int AS n FROM documents GROUP BY collection ORDER BY collection'
+        );
+        counts.rows.forEach(r => { info.counts[r.collection] = r.n; });
+        info.totalDocuments = counts.rows.reduce((s, r) => s + r.n, 0);
+      } catch (e) {
+        info.connected = false;
+        info.error = e.message;
+      }
+    } else {
+      info.connected = firebaseInitialized && Boolean(db);
+      // Firestore/memory counts
+      for (const col of ['consignments', 'skus', 'boxes', 'videos', 'documents', 'users', 'marketplaces', 'docketCompanies', 'auditLogs', 'productivity']) {
+        try { info.counts[col] = (await firestoreHelpers.getCollection(col)).length; } catch { info.counts[col] = 0; }
+      }
+      info.totalDocuments = Object.values(info.counts).reduce((s, n) => s + n, 0);
     }
-    info.totalDocuments = Object.values(info.counts).reduce((s, n) => s + n, 0);
 
     res.json(info);
   } catch (error) {
@@ -168,6 +192,62 @@ router.post('/reconcile', authenticateToken, requireRole('admin'), async (req, r
     res.json({ ok: true, scanned, fixedConsignments, fixedSkus, issues });
   } catch (error) {
     console.error('Reconcile error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Migrate Firestore to PostgreSQL (admin only)
+router.post('/migrate-to-postgres', authenticateToken, requireRole('admin'), async (req, res) => {
+  try {
+    if (!pgEnabled()) {
+      return res.status(400).json({ error: 'PostgreSQL is not enabled or configured' });
+    }
+    if (!firebaseInitialized || !db) {
+      return res.status(400).json({ error: 'Firebase Firestore is not initialized' });
+    }
+
+    const COLLECTIONS = [
+      'settings',
+      'users',
+      'marketplaces',
+      'docketCompanies',
+      'consignments',
+      'skus',
+      'boxes',
+      'videos',
+      'documents',
+      'auditLogs',
+      'productivity'
+    ];
+
+    const results = {};
+    let totalMigrated = 0;
+
+    for (const col of COLLECTIONS) {
+      const snapshot = await db.collection(col).get();
+      if (!snapshot.empty) {
+        const items = snapshot.docs.map(doc => [doc.id, doc.data()]);
+        await pgHelpers.batchSet(col, items);
+        results[col] = items.length;
+        totalMigrated += items.length;
+      } else {
+        results[col] = 0;
+      }
+    }
+
+    await addAuditLog('migrate', 'settings', 'firestore-to-postgres', req.user.id, {
+      totalCollections: COLLECTIONS.length,
+      totalMigrated,
+      details: results
+    });
+
+    res.json({
+      ok: true,
+      migrated: results,
+      total: totalMigrated
+    });
+  } catch (error) {
+    console.error('Migration to Postgres failed:', error);
     res.status(500).json({ error: error.message });
   }
 });

@@ -1,5 +1,7 @@
 const { v4: uuidv4 } = require('uuid');
 const { db, firebaseInitialized } = require('../config/firebase');
+const { pgEnabled } = require('../config/database');
+const pgHelpers = require('./pgHelpers');
 
 const isFirebaseAvailable = () => firebaseInitialized && db !== null;
 
@@ -33,6 +35,14 @@ const addAuditLog = async (action, entityType, entityId, userId, details = {}) =
     timestamp: now()
   };
 
+  if (pgEnabled()) {
+    try {
+      await pgHelpers.setDocument('auditLogs', logEntry.id, logEntry);
+      return;
+    } catch (e) {
+      console.error('[Audit] PG write failed:', e.message);
+    }
+  }
   if (isFirebaseAvailable()) {
     try {
       await db.collection('auditLogs').add(logEntry);
@@ -46,6 +56,7 @@ const addAuditLog = async (action, entityType, entityId, userId, details = {}) =
 
 const firestoreHelpers = {
   async getCollection(collectionName) {
+    if (pgEnabled()) return pgHelpers.getCollection(collectionName);
     if (!isFirebaseAvailable()) {
       return Array.from(memoryStore[collectionName]?.values() || []);
     }
@@ -59,6 +70,7 @@ const firestoreHelpers = {
   },
 
   async getDocument(collectionName, docId) {
+    if (pgEnabled()) return pgHelpers.getDocument(collectionName, docId);
     if (!isFirebaseAvailable()) {
       return memoryStore[collectionName]?.get(docId) || null;
     }
@@ -72,6 +84,7 @@ const firestoreHelpers = {
   },
 
   async setDocument(collectionName, docId, data) {
+    if (pgEnabled()) return pgHelpers.setDocument(collectionName, docId, data);
     if (!isFirebaseAvailable()) {
       if (!memoryStore[collectionName]) memoryStore[collectionName] = new Map();
       // Merge with existing doc (mirrors Firestore { merge: true } behaviour)
@@ -94,6 +107,7 @@ const firestoreHelpers = {
   },
 
   async deleteDocument(collectionName, docId) {
+    if (pgEnabled()) return pgHelpers.deleteDocument(collectionName, docId);
     if (!isFirebaseAvailable()) {
       if (!memoryStore[collectionName]) return true;
       memoryStore[collectionName].delete(docId);
@@ -110,6 +124,7 @@ const firestoreHelpers = {
   },
 
   async queryCollection(collectionName, fieldPath, opStr, value) {
+    if (pgEnabled()) return pgHelpers.queryCollection(collectionName, fieldPath, opStr, value);
     if (!isFirebaseAvailable()) {
       const all = Array.from(memoryStore[collectionName]?.values() || []);
       return all.filter(item => {
@@ -134,6 +149,7 @@ const firestoreHelpers = {
 
   // Batch operations for better performance
   async batchSet(collectionName, items) {
+    if (pgEnabled()) return pgHelpers.batchSet(collectionName, items);
     if (!isFirebaseAvailable()) {
       if (!memoryStore[collectionName]) memoryStore[collectionName] = new Map();
       for (const [docId, data] of items) {
@@ -167,6 +183,7 @@ const firestoreHelpers = {
   },
 
   async batchDelete(collectionName, docIds) {
+    if (pgEnabled()) return pgHelpers.batchDelete(collectionName, docIds);
     if (!isFirebaseAvailable()) {
       for (const docId of docIds) {
         memoryStore[collectionName].delete(docId);
@@ -193,6 +210,7 @@ const firestoreHelpers = {
   // Multi-collection batch write — auto-chunks to stay under Firestore's 500-op limit
   async batchSetMulti(items) {
     // items = [[collectionName, docId, data], ...]
+    if (pgEnabled()) return pgHelpers.batchSetMulti(items);
     if (!isFirebaseAvailable()) {
       for (const [collectionName, docId, data] of items) {
         if (!memoryStore[collectionName]) memoryStore[collectionName] = new Map();

@@ -21,6 +21,9 @@ export default function Settings() {
   const [fbAuthEnabled, setFbAuthEnabled] = useState(null);
   const [syncingFb, setSyncingFb] = useState(false);
   const [fbSyncResult, setFbSyncResult] = useState(null);
+  const [migrating, setMigrating] = useState(false);
+  const [migrationResult, setMigrationResult] = useState(null);
+  const [showMigrateConfirm, setShowMigrateConfirm] = useState(false);
   const [settings, setSettings] = useState({
     consignmentRetentionDays: 450,
     videoRetentionDays: 60,
@@ -70,6 +73,21 @@ export default function Settings() {
       addToast(e.response?.data?.error || 'Reconcile failed', 'error');
     }
     setReconciling(false);
+  };
+
+  const handleMigration = async () => {
+    setShowMigrateConfirm(false);
+    setMigrating(true);
+    setMigrationResult(null);
+    try {
+      const res = await settingsAPI.migrateToPostgres();
+      setMigrationResult(res.data);
+      addToast(`Successfully migrated ${res.data.total} documents to PostgreSQL!`, 'success');
+      fetchDbInfo();
+    } catch (e) {
+      addToast(e.response?.data?.error || 'Migration failed', 'error');
+    }
+    setMigrating(false);
   };
 
   if (!isAdmin) {
@@ -199,6 +217,48 @@ export default function Settings() {
                       </div>
                     ))}
                   </div>
+
+                  {/* Migration section */}
+                  {dbInfo.connected && dbInfo.datastore.includes('PostgreSQL') && (
+                    <>
+                      <div className="border-t border-slate-100 my-6"></div>
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-2">
+                          <Database className="w-5 h-5 text-indigo-600" />
+                          <h3 className="text-base font-semibold text-slate-900">Migrate Firestore to PostgreSQL</h3>
+                        </div>
+                        <p className="text-sm text-slate-500">
+                          Copy all existing documents from Firebase Firestore collections into your PostgreSQL long-term preservation datastore. This will upsert records (merging gracefully if they exist).
+                        </p>
+
+                        {migrationResult && (
+                          <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl space-y-3">
+                            <div className="flex items-center gap-2 text-sm font-semibold text-emerald-700">
+                              <CheckCircle2 className="w-4 h-4" />
+                              <span>Successfully migrated {migrationResult.total} documents!</span>
+                            </div>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                              {Object.entries(migrationResult.migrated || {}).map(([col, n]) => (
+                                <div key={col} className="bg-white border border-slate-100 rounded p-2 flex justify-between items-center">
+                                  <span className="text-slate-500 capitalize truncate mr-1">{col}</span>
+                                  <span className="font-bold text-slate-800">{n}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        <button
+                          onClick={() => setShowMigrateConfirm(true)}
+                          disabled={migrating}
+                          className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium transition-colors disabled:opacity-50"
+                        >
+                          {migrating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+                          {migrating ? 'Migrating Data…' : 'Start Migration Now'}
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </>
               ) : (
                 <p className="text-sm text-slate-400 text-center py-4">Unable to load database info.</p>
@@ -418,6 +478,23 @@ export default function Settings() {
         }
         onConfirm={handleRunCleanup}
         onCancel={() => setShowCleanupConfirm(false)}
+      />
+
+      <ConfirmModal
+        show={showMigrateConfirm}
+        title="Migrate Firestore to PostgreSQL?"
+        variant="warning"
+        confirmLabel="Yes, Start Migration"
+        loading={migrating}
+        message={
+          <span>
+            This will retrieve all existing documents from the 11 Firebase Firestore collections and insert/upsert them directly into PostgreSQL.
+            <br /><br />
+            <span className="text-amber-700 font-medium">Any existing records in PostgreSQL with the same ID will be merged or overwritten. Proceed with caution.</span>
+          </span>
+        }
+        onConfirm={handleMigration}
+        onCancel={() => setShowMigrateConfirm(false)}
       />
     </div>
   );
