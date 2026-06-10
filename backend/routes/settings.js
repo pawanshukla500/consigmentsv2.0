@@ -79,18 +79,39 @@ router.post('/cleanup', authenticateToken, requireRole('admin'), async (req, res
 router.get('/db-info', authenticateToken, requireRole('admin'), async (req, res) => {
   try {
     const usingPg = pgEnabled();
+    let dbName = process.env.DB_NAME || 'postgres';
+    let dbUser = process.env.DB_USER || 'postgres';
+    let dbHost = process.env.NODE_ENV === 'production' && process.env.INSTANCE_CONNECTION_NAME
+      ? `/cloudsql/${process.env.INSTANCE_CONNECTION_NAME}`
+      : (process.env.DB_HOST || 'localhost');
+
+    const connectionString = process.env.DATABASE_URL;
+    if (connectionString) {
+      try {
+        // Handle postgres:// or postgresql:// protocols safely
+        const rawUrl = connectionString.split('?')[0];
+        const parsed = new URL(rawUrl);
+        dbUser = parsed.username || dbUser;
+        dbName = parsed.pathname ? parsed.pathname.replace(/^\//, '') : dbName;
+        dbHost = parsed.hostname || dbHost;
+        if (parsed.port) {
+          dbHost = `${dbHost}:${parsed.port}`;
+        }
+      } catch (err) {
+        console.warn('[Settings] Failed to parse DATABASE_URL:', err.message);
+      }
+    }
+
     const info = {
       datastore: usingPg ? 'PostgreSQL (Google Cloud SQL)' : (firebaseInitialized ? 'Firebase Firestore' : 'In-memory fallback'),
       enabled: usingPg || firebaseInitialized,
       connected: false,
       instanceConnectionName: process.env.INSTANCE_CONNECTION_NAME || null,
-      host: process.env.NODE_ENV === 'production' && process.env.INSTANCE_CONNECTION_NAME
-        ? `/cloudsql/${process.env.INSTANCE_CONNECTION_NAME}`
-        : (process.env.DB_HOST || 'localhost'),
-      database: process.env.DB_NAME || 'postgres',
-      user: process.env.DB_USER || 'postgres',
+      host: dbHost,
+      database: dbName,
+      user: dbUser,
       region: (process.env.INSTANCE_CONNECTION_NAME || '').split(':')[1] || null,
-      ssl: process.env.NODE_ENV === 'production' || process.env.DB_SSL === 'true',
+      ssl: process.env.NODE_ENV === 'production' || process.env.DB_SSL === 'true' || !!connectionString,
       storageBucket: process.env.FIREBASE_STORAGE_BUCKET || null,
       counts: {},
       totalDocuments: 0
