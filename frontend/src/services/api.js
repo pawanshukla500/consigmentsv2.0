@@ -48,7 +48,8 @@ export const consignmentsAPI = {
   update: (id, data) => api.put(`/consignments/${id}`, data),
   delete: (id) => api.delete(`/consignments/${id}`),
   packSku: (consignmentId, skuId, data) => api.post(`/consignments/${consignmentId}/skus/${skuId}/pack`, data),
-  saveBox: (consignmentId, data) => api.post(`/consignments/${consignmentId}/boxes`, data)
+  saveBox: (consignmentId, data) => api.post(`/consignments/${consignmentId}/boxes`, data),
+  archive: (id) => api.post(`/consignments/${id}/archive`)
 };
 
 // Uploads API

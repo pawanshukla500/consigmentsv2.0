@@ -56,38 +56,68 @@ const addAuditLog = async (action, entityType, entityId, userId, details = {}) =
 
 const firestoreHelpers = {
   async getCollection(collectionName) {
-    if (pgEnabled()) return pgHelpers.getCollection(collectionName);
+    let liveItems = [];
     if (!isFirebaseAvailable()) {
-      return Array.from(memoryStore[collectionName]?.values() || []);
+      liveItems = Array.from(memoryStore[collectionName]?.values() || []);
+    } else {
+      try {
+        const snapshot = await db.collection(collectionName).get();
+        liveItems = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      } catch (e) {
+        console.error(`Error getting collection ${collectionName} from Firestore:`, e.message);
+        liveItems = Array.from(memoryStore[collectionName]?.values() || []);
+      }
     }
-    try {
-      const snapshot = await db.collection(collectionName).get();
-      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    } catch (e) {
-      console.error(`Error getting collection ${collectionName}:`, e.message);
-      return Array.from(memoryStore[collectionName]?.values() || []);
+
+    if (pgEnabled()) {
+      try {
+        const pgItems = await pgHelpers.getCollection(collectionName);
+        const merged = new Map();
+        pgItems.forEach(item => merged.set(item.id, item));
+        liveItems.forEach(item => merged.set(item.id, item));
+        return Array.from(merged.values());
+      } catch (e) {
+        console.error(`Error merging PG collection ${collectionName}:`, e.message);
+      }
     }
+    return liveItems;
   },
 
   async getDocument(collectionName, docId) {
-    if (pgEnabled()) return pgHelpers.getDocument(collectionName, docId);
-    if (!isFirebaseAvailable()) {
-      return memoryStore[collectionName]?.get(docId) || null;
+    let docData = null;
+    if (isFirebaseAvailable()) {
+      try {
+        const doc = await db.collection(collectionName).doc(docId).get();
+        if (doc.exists) docData = { id: doc.id, ...doc.data() };
+      } catch (e) {}
+    } else {
+      docData = memoryStore[collectionName]?.get(docId) || null;
     }
-    try {
-      const doc = await db.collection(collectionName).doc(docId).get();
-      return doc.exists ? { id: doc.id, ...doc.data() } : null;
-    } catch (e) {
-      console.error(`Error getting document ${collectionName}/${docId}:`, e.message);
-      return memoryStore[collectionName]?.get(docId) || null;
+
+    if (!docData && pgEnabled()) {
+      try {
+        docData = await pgHelpers.getDocument(collectionName, docId);
+      } catch (e) {
+        console.error(`Error checking PG document ${collectionName}/${docId}:`, e.message);
+      }
     }
+    return docData;
   },
 
   async setDocument(collectionName, docId, data) {
-    if (pgEnabled()) return pgHelpers.setDocument(collectionName, docId, data);
+    if (pgEnabled()) {
+      try {
+        const existsInPg = await pgHelpers.getDocument(collectionName, docId);
+        if (existsInPg) {
+          return await pgHelpers.setDocument(collectionName, docId, data);
+        }
+      } catch (e) {
+        console.error(`Error checking/updating PG document ${collectionName}/${docId}:`, e.message);
+      }
+    }
+
     if (!isFirebaseAvailable()) {
       if (!memoryStore[collectionName]) memoryStore[collectionName] = new Map();
-      // Merge with existing doc (mirrors Firestore { merge: true } behaviour)
       const existing = memoryStore[collectionName].get(docId) || {};
       const merged = { ...existing, id: docId, ...data };
       memoryStore[collectionName].set(docId, merged);
@@ -97,96 +127,156 @@ const firestoreHelpers = {
       await db.collection(collectionName).doc(docId).set(data, { merge: true });
       return { id: docId, ...data };
     } catch (e) {
-      console.error(`Error setting document ${collectionName}/${docId}:`, e.message);
+      console.error(`Error setting document ${collectionName}/${docId} in Firestore:`, e.message);
+      if (!memoryStore[collectionName]) memoryStore[collectionName] = new Map();
       const existing = memoryStore[collectionName]?.get(docId) || {};
       const merged = { ...existing, id: docId, ...data };
-      if (!memoryStore[collectionName]) memoryStore[collectionName] = new Map();
       memoryStore[collectionName].set(docId, merged);
       return merged;
     }
   },
 
   async deleteDocument(collectionName, docId) {
-    if (pgEnabled()) return pgHelpers.deleteDocument(collectionName, docId);
+    if (pgEnabled()) {
+      try {
+        await pgHelpers.deleteDocument(collectionName, docId);
+      } catch (e) {
+        console.error(`Error deleting PG document ${collectionName}/${docId}:`, e.message);
+      }
+    }
+
     if (!isFirebaseAvailable()) {
-      if (!memoryStore[collectionName]) return true;
-      memoryStore[collectionName].delete(docId);
+      if (memoryStore[collectionName]) {
+        memoryStore[collectionName].delete(docId);
+      }
       return true;
     }
     try {
       await db.collection(collectionName).doc(docId).delete();
       return true;
     } catch (e) {
-      console.error(`Error deleting document ${collectionName}/${docId}:`, e.message);
-      memoryStore[collectionName].delete(docId);
+      console.error(`Error deleting document ${collectionName}/${docId} in Firestore:`, e.message);
+      if (memoryStore[collectionName]) {
+        memoryStore[collectionName].delete(docId);
+      }
       return true;
     }
   },
 
   async queryCollection(collectionName, fieldPath, opStr, value) {
-    if (pgEnabled()) return pgHelpers.queryCollection(collectionName, fieldPath, opStr, value);
+    let liveItems = [];
     if (!isFirebaseAvailable()) {
       const all = Array.from(memoryStore[collectionName]?.values() || []);
-      return all.filter(item => {
+      liveItems = all.filter(item => {
         if (opStr === '==') return item[fieldPath] === value;
         if (opStr === 'array-contains') return item[fieldPath]?.includes(value);
         return true;
       });
+    } else {
+      try {
+        const snapshot = await db.collection(collectionName).where(fieldPath, opStr, value).get();
+        liveItems = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      } catch (e) {
+        console.error(`Error querying collection ${collectionName} in Firestore:`, e.message);
+        const all = Array.from(memoryStore[collectionName]?.values() || []);
+        liveItems = all.filter(item => {
+          if (opStr === '==') return item[fieldPath] === value;
+          if (opStr === 'array-contains') return item[fieldPath]?.includes(value);
+          return true;
+        });
+      }
     }
-    try {
-      const snapshot = await db.collection(collectionName).where(fieldPath, opStr, value).get();
-      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    } catch (e) {
-      console.error(`Error querying collection ${collectionName}:`, e.message);
-      const all = Array.from(memoryStore[collectionName]?.values() || []);
-      return all.filter(item => {
-        if (opStr === '==') return item[fieldPath] === value;
-        if (opStr === 'array-contains') return item[fieldPath]?.includes(value);
-        return true;
-      });
+
+    if (pgEnabled()) {
+      try {
+        const pgItems = await pgHelpers.queryCollection(collectionName, fieldPath, opStr, value);
+        const merged = new Map();
+        pgItems.forEach(item => merged.set(item.id, item));
+        liveItems.forEach(item => merged.set(item.id, item));
+        return Array.from(merged.values());
+      } catch (e) {
+        console.error(`Error merging PG query ${collectionName}:`, e.message);
+      }
     }
+    return liveItems;
   },
 
-  // Batch operations for better performance
   async batchSet(collectionName, items) {
-    if (pgEnabled()) return pgHelpers.batchSet(collectionName, items);
-    if (!isFirebaseAvailable()) {
-      if (!memoryStore[collectionName]) memoryStore[collectionName] = new Map();
-      for (const [docId, data] of items) {
-        const existing = memoryStore[collectionName].get(docId) || {};
-        memoryStore[collectionName].set(docId, { ...existing, id: docId, ...data });
-      }
-      return true;
-    }
-    // Firestore hard limit: 500 writes per batch — chunk accordingly
-    const CHUNK_SIZE = 490;
-    try {
-      for (let i = 0; i < items.length; i += CHUNK_SIZE) {
-        const chunk = items.slice(i, i + CHUNK_SIZE);
-        const batch = db.batch();
-        for (const [docId, data] of chunk) {
-          const ref = db.collection(collectionName).doc(docId);
-          batch.set(ref, data, { merge: true });
+    const pgItems = [];
+    const fsItems = [];
+
+    if (pgEnabled()) {
+      try {
+        for (const [docId, data] of items) {
+          const exists = await pgHelpers.getDocument(collectionName, docId);
+          if (exists) {
+            pgItems.push([docId, data]);
+          } else {
+            fsItems.push([docId, data]);
+          }
         }
-        await batch.commit();
+      } catch (e) {
+        console.error(`Error resolving batch set PG targets:`, e.message);
+        fsItems.push(...items);
       }
-      return true;
-    } catch (e) {
-      console.error(`Error batch setting ${collectionName}:`, e.message);
-      if (!memoryStore[collectionName]) memoryStore[collectionName] = new Map();
-      for (const [docId, data] of items) {
-        const existing = memoryStore[collectionName].get(docId) || {};
-        memoryStore[collectionName].set(docId, { ...existing, id: docId, ...data });
-      }
-      return true;
+    } else {
+      fsItems.push(...items);
     }
+
+    if (pgItems.length > 0) {
+      try {
+        await pgHelpers.batchSet(collectionName, pgItems);
+      } catch (e) {
+        console.error(`PG batchSet failed:`, e.message);
+      }
+    }
+
+    if (fsItems.length > 0) {
+      if (!isFirebaseAvailable()) {
+        if (!memoryStore[collectionName]) memoryStore[collectionName] = new Map();
+        for (const [docId, data] of fsItems) {
+          const existing = memoryStore[collectionName].get(docId) || {};
+          memoryStore[collectionName].set(docId, { ...existing, id: docId, ...data });
+        }
+        return true;
+      }
+      const CHUNK_SIZE = 490;
+      try {
+        for (let i = 0; i < fsItems.length; i += CHUNK_SIZE) {
+          const chunk = fsItems.slice(i, i + CHUNK_SIZE);
+          const batch = db.batch();
+          for (const [docId, data] of chunk) {
+            const ref = db.collection(collectionName).doc(docId);
+            batch.set(ref, data, { merge: true });
+          }
+          await batch.commit();
+        }
+        return true;
+      } catch (e) {
+        console.error(`Error batch setting ${collectionName} in Firestore:`, e.message);
+        if (!memoryStore[collectionName]) memoryStore[collectionName] = new Map();
+        for (const [docId, data] of fsItems) {
+          const existing = memoryStore[collectionName].get(docId) || {};
+          memoryStore[collectionName].set(docId, { ...existing, id: docId, ...data });
+        }
+        return true;
+      }
+    }
+    return true;
   },
 
   async batchDelete(collectionName, docIds) {
-    if (pgEnabled()) return pgHelpers.batchDelete(collectionName, docIds);
+    if (pgEnabled()) {
+      try {
+        await pgHelpers.batchDelete(collectionName, docIds);
+      } catch (e) {
+        console.error(`PG batchDelete failed:`, e.message);
+      }
+    }
+
     if (!isFirebaseAvailable()) {
       for (const docId of docIds) {
-        memoryStore[collectionName].delete(docId);
+        memoryStore[collectionName]?.delete(docId);
       }
       return true;
     }
@@ -199,49 +289,76 @@ const firestoreHelpers = {
       await batch.commit();
       return true;
     } catch (e) {
-      console.error(`Error batch deleting ${collectionName}:`, e.message);
+      console.error(`Error batch deleting ${collectionName} in Firestore:`, e.message);
       for (const docId of docIds) {
-        memoryStore[collectionName].delete(docId);
+        memoryStore[collectionName]?.delete(docId);
       }
       return true;
     }
   },
 
-  // Multi-collection batch write — auto-chunks to stay under Firestore's 500-op limit
   async batchSetMulti(items) {
-    // items = [[collectionName, docId, data], ...]
-    if (pgEnabled()) return pgHelpers.batchSetMulti(items);
-    if (!isFirebaseAvailable()) {
-      for (const [collectionName, docId, data] of items) {
-        if (!memoryStore[collectionName]) memoryStore[collectionName] = new Map();
-        const existing = memoryStore[collectionName].get(docId) || {};
-        memoryStore[collectionName].set(docId, { ...existing, id: docId, ...data });
-      }
-      return true;
-    }
-    // Firestore hard limit: 500 writes per batch — chunk accordingly
-    const CHUNK_SIZE = 490;
-    try {
-      for (let i = 0; i < items.length; i += CHUNK_SIZE) {
-        const chunk = items.slice(i, i + CHUNK_SIZE);
-        const batch = db.batch();
-        for (const [collectionName, docId, data] of chunk) {
-          const ref = db.collection(collectionName).doc(docId);
-          batch.set(ref, data, { merge: true });
+    const pgItems = [];
+    const fsItems = [];
+
+    if (pgEnabled()) {
+      try {
+        for (const [col, docId, data] of items) {
+          const exists = await pgHelpers.getDocument(col, docId);
+          if (exists) {
+            pgItems.push([col, docId, data]);
+          } else {
+            fsItems.push([col, docId, data]);
+          }
         }
-        await batch.commit();
+      } catch (e) {
+        console.error(`Error checking batchSetMulti targets:`, e.message);
+        fsItems.push(...items);
       }
-      return true;
-    } catch (e) {
-      console.error('Error batchSetMulti:', e.message);
-      // Fallback to memory on failure
-      for (const [collectionName, docId, data] of items) {
-        if (!memoryStore[collectionName]) memoryStore[collectionName] = new Map();
-        const existing = memoryStore[collectionName].get(docId) || {};
-        memoryStore[collectionName].set(docId, { ...existing, id: docId, ...data });
-      }
-      return true;
+    } else {
+      fsItems.push(...items);
     }
+
+    if (pgItems.length > 0) {
+      try {
+        await pgHelpers.batchSetMulti(pgItems);
+      } catch (e) {
+        console.error(`PG batchSetMulti failed:`, e.message);
+      }
+    }
+
+    if (fsItems.length > 0) {
+      if (!isFirebaseAvailable()) {
+        for (const [col, docId, data] of fsItems) {
+          if (!memoryStore[col]) memoryStore[col] = new Map();
+          const existing = memoryStore[col].get(docId) || {};
+          memoryStore[col].set(docId, { ...existing, id: docId, ...data });
+        }
+        return true;
+      }
+      const CHUNK_SIZE = 490;
+      try {
+        for (let i = 0; i < fsItems.length; i += CHUNK_SIZE) {
+          const chunk = fsItems.slice(i, i + CHUNK_SIZE);
+          const batch = db.batch();
+          for (const [col, docId, data] of chunk) {
+            const ref = db.collection(col).doc(docId);
+            batch.set(ref, data, { merge: true });
+          }
+          await batch.commit();
+        }
+        return true;
+      } catch (e) {
+        console.error('Error batchSetMulti in Firestore:', e.message);
+        for (const [col, docId, data] of fsItems) {
+          if (!memoryStore[col]) memoryStore[col] = new Map();
+          const existing = memoryStore[col].get(docId) || {};
+          memoryStore[col].set(docId, { ...existing, id: docId, ...data });
+        }
+        return true;
+      }
+    }
+    return true;
   }
 };
 

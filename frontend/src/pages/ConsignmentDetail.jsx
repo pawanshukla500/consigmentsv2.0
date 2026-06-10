@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, Package, Box, Video, FileText, Upload, AlertCircle,
   Trash2, Download, Loader2, FileSpreadsheet, CheckCircle2,
-  Copy, ExternalLink, Tag, ChevronDown, ChevronUp
+  Copy, ExternalLink, Tag, ChevronDown, ChevronUp, Database
 } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
 import JsBarcode from 'jsbarcode';
@@ -28,6 +28,23 @@ const ConsignmentDetail = () => {
   const [deleteFile, setDeleteFile] = useState(null); // { id, type, name }
   const [savingTracking, setSavingTracking] = useState(false);
   const [trackingForm, setTrackingForm] = useState({});
+  const [showArchiveModal, setShowArchiveModal] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+
+  const handleArchive = async () => {
+    try {
+      setArchiving(true);
+      const res = await consignmentsAPI.archive(id);
+      addToast(res.data.message || 'Consignment archived successfully!', 'success');
+      setShowArchiveModal(false);
+      fetchConsignment();
+    } catch (error) {
+      console.error('Archive failed:', error);
+      addToast(error.response?.data?.error || 'Archival failed', 'error');
+    } finally {
+      setArchiving(false);
+    }
+  };
 
   const openTrackingEdit = () => {
     setTrackingForm({
@@ -382,9 +399,23 @@ const ConsignmentDetail = () => {
               )}
             </div>
           </div>
-          <div className="text-left sm:text-right">
-            {consignment.marketplace?.name && <p className="text-xs text-primary-600">{consignment.marketplace.name}</p>}
-            {consignment.warehouse && <p className="text-xs text-slate-500 mt-0.5">WH: {consignment.warehouse}</p>}
+          <div className="text-left sm:text-right flex flex-col items-start sm:items-end gap-2">
+            <div>
+              {consignment.marketplace?.name && <p className="text-xs text-primary-600 font-semibold">{consignment.marketplace.name}</p>}
+              {consignment.warehouse && <p className="text-xs text-slate-500 mt-0.5">WH: {consignment.warehouse}</p>}
+            </div>
+            {consignment.isArchived ? (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                <Database className="w-3.5 h-3.5" /> Archived in PostgreSQL
+              </span>
+            ) : consignment.pgEnabled ? (
+              <button
+                onClick={() => setShowArchiveModal(true)}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-medium transition-all shadow-sm duration-200 hover:shadow"
+              >
+                <Database className="w-3.5 h-3.5" /> Archive to PostgreSQL
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
@@ -900,6 +931,23 @@ const ConsignmentDetail = () => {
         loading={false}
         onConfirm={handleDeleteFile}
         onCancel={() => setDeleteFile(null)}
+      />
+
+      {/* Archive to PG Confirmation */}
+      <ConfirmModal
+        show={showArchiveModal}
+        title="Archive Consignment to PostgreSQL?"
+        message={
+          <div className="space-y-2 text-slate-600">
+            <p>Are you sure you want to archive consignment <strong className="text-slate-800">{consignment.internalShipmentNo || consignment.id}</strong> to PostgreSQL?</p>
+            <p className="text-xs">This will move all consignment-wise records (SKUs, Boxes, Videos & Documents metadata, Scan records) to the PostgreSQL database for long-term preservation and free up Firestore space.</p>
+            <p className="text-xs text-amber-600 font-semibold">⚠️ Note: Physical video/document files will remain completely safe on Firebase Storage.</p>
+          </div>
+        }
+        confirmLabel="Archive and Clean Up"
+        loading={archiving}
+        onConfirm={handleArchive}
+        onCancel={() => setShowArchiveModal(false)}
       />
     </div>
   );

@@ -58,7 +58,42 @@ router.get('/:id', authenticateToken, async (req, res) => {
       consignment.marketplaceId ? firestoreHelpers.getDocument('marketplaces', consignment.marketplaceId) : null
     ]);
 
-    res.json({ consignment: { ...consignment, skus, boxes, videos, documents, marketplace } });
+    // Determine if archived in PostgreSQL
+    let isArchived = false;
+    const { pgEnabled } = require('../config/database');
+    const pgHelpers = require('../utils/pgHelpers');
+    const postgresSupport = pgEnabled();
+
+    if (postgresSupport) {
+      const existsInPg = await pgHelpers.getDocument('consignments', id);
+      if (existsInPg) {
+        const { isFirebaseAvailable, memoryStore } = require('../utils/helpers');
+        const { db } = require('../config/firebase');
+        let existsInLive = false;
+        if (isFirebaseAvailable()) {
+          const doc = await db.collection('consignments').doc(id).get();
+          existsInLive = doc.exists;
+        } else {
+          existsInLive = memoryStore.consignments.has(id);
+        }
+        if (!existsInLive) {
+          isArchived = true;
+        }
+      }
+    }
+
+    res.json({
+      consignment: {
+        ...consignment,
+        skus,
+        boxes,
+        videos,
+        documents,
+        marketplace,
+        isArchived,
+        pgEnabled: postgresSupport
+      }
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -318,6 +353,164 @@ router.post('/:id/boxes', authenticateToken, async (req, res) => {
     res.status(201).json({ box: boxData });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Archive consignment to PostgreSQL
+router.post('/:id/archive', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { pgEnabled } = require('../config/database');
+    const pgHelpers = require('../utils/pgHelpers');
+    const { isFirebaseAvailable, memoryStore } = require('../utils/helpers');
+    const { db } = require('../config/firebase');
+
+    if (!pgEnabled()) {
+      return res.status(400).json({ error: 'PostgreSQL archive is not enabled or configured.' });
+    }
+
+    // Check if the consignment is already archived in PG
+    const existsInPg = await pgHelpers.getDocument('consignments', id);
+    if (existsInPg) {
+      return res.status(400).json({ error: 'Consignment is already archived in PostgreSQL.' });
+    }
+
+    // Fetch consignment from the live store (Firestore or Memory)
+    let consignment = null;
+    let fromFirestore = false;
+
+    if (isFirebaseAvailable()) {
+      const doc = await db.collection('consignments').doc(id).get();
+      if (doc.exists) {
+        consignment = { id: doc.id, ...doc.data() };
+        fromFirestore = true;
+      }
+    } else {
+      consignment = memoryStore.consignments.get(id) || null;
+    }
+
+    if (!consignment) {
+      return res.status(404).json({ error: 'Active consignment not found in live database.' });
+    }
+
+    // Gather all related documents from live store
+    const skus = [];
+    const boxes = [];
+    const videos = [];
+    const docs = [];
+    const scan_records = [];
+
+    // Helper to fetch live documents by query or ids
+    if (fromFirestore) {
+      // Fetch skus
+      const skuSnap = await db.collection('skus').where('consignmentId', '==', id).get();
+      skuSnap.forEach(d => skus.push({ id: d.id, ...d.data() }));
+
+      // Fetch boxes
+      const boxSnap = await db.collection('boxes').where('consignmentId', '==', id).get();
+      boxSnap.forEach(d => boxes.push({ id: d.id, ...d.data() }));
+
+      // Fetch videos metadata
+      const videoSnap = await db.collection('videos').where('consignmentId', '==', id).get();
+      videoSnap.forEach(d => videos.push({ id: d.id, ...d.data() }));
+
+      // Fetch documents metadata
+      const docSnap = await db.collection('documents').where('consignmentId', '==', id).get();
+      docSnap.forEach(d => docs.push({ id: d.id, ...d.data() }));
+
+      // Fetch scan records
+      const scanSnap = await db.collection('scan_records').where('consignmentId', '==', id).get();
+      scanSnap.forEach(d => scan_records.push({ id: d.id, ...d.data() }));
+    } else {
+      // Memory store fetch
+      Array.from(memoryStore.skus.values()).forEach(item => {
+        if (item.consignmentId === id) skus.push(item);
+      });
+      Array.from(memoryStore.boxes.values()).forEach(item => {
+        if (item.consignmentId === id) boxes.push(item);
+      });
+      Array.from(memoryStore.videos.values()).forEach(item => {
+        if (item.consignmentId === id) videos.push(item);
+      });
+      Array.from(memoryStore.documents.values()).forEach(item => {
+        if (item.consignmentId === id) docs.push(item);
+      });
+      Array.from(memoryStore.scan_records.values()).forEach(item => {
+        if (item.consignmentId === id) scan_records.push(item);
+      });
+    }
+
+    // Now, prepare all items for batchSetMulti in Postgres
+    // Format: [collection, id, data]
+    const archiveBatch = [];
+
+    archiveBatch.push(['consignments', id, consignment]);
+    skus.forEach(item => archiveBatch.push(['skus', item.id, item]));
+    boxes.forEach(item => archiveBatch.push(['boxes', item.id, item]));
+    videos.forEach(item => archiveBatch.push(['videos', item.id, item]));
+    docs.forEach(item => archiveBatch.push(['documents', item.id, item]));
+    scan_records.forEach(item => archiveBatch.push(['scan_records', item.id, item]));
+
+    // Perform PostgreSQL batch write
+    await pgHelpers.batchSetMulti(archiveBatch);
+
+    // If Postgres batch write succeeded, delete from live store (Firestore or Memory)
+    if (fromFirestore) {
+      // We will perform a batch delete from Firestore
+      const chunks = [];
+      const allRefs = [];
+
+      allRefs.push(db.collection('consignments').doc(id));
+      skus.forEach(item => allRefs.push(db.collection('skus').doc(item.id)));
+      boxes.forEach(item => allRefs.push(db.collection('boxes').doc(item.id)));
+      videos.forEach(item => allRefs.push(db.collection('videos').doc(item.id)));
+      docs.forEach(item => allRefs.push(db.collection('documents').doc(item.id)));
+      scan_records.forEach(item => allRefs.push(db.collection('scan_records').doc(item.id)));
+
+      // Firestore batches are limited to 500 operations
+      const CHUNK_SIZE = 400;
+      for (let i = 0; i < allRefs.length; i += CHUNK_SIZE) {
+        const chunk = allRefs.slice(i, i + CHUNK_SIZE);
+        const batch = db.batch();
+        chunk.forEach(ref => batch.delete(ref));
+        await batch.commit();
+      }
+    } else {
+      // Memory store delete
+      memoryStore.consignments.delete(id);
+      skus.forEach(item => memoryStore.skus.delete(item.id));
+      boxes.forEach(item => memoryStore.boxes.delete(item.id));
+      videos.forEach(item => memoryStore.videos.delete(item.id));
+      docs.forEach(item => memoryStore.documents.delete(item.id));
+      scan_records.forEach(item => memoryStore.scan_records.delete(item.id));
+    }
+
+    // Add audit log
+    await addAuditLog('archive_to_sql', 'consignment', id, req.user.id, {
+      shipmentNo: consignment.shipmentNo,
+      internalShipmentNo: consignment.internalShipmentNo,
+      skusCount: skus.length,
+      boxesCount: boxes.length,
+      videosCount: videos.length,
+      documentsCount: docs.length,
+      scansCount: scan_records.length
+    });
+
+    res.json({
+      success: true,
+      message: 'Consignment successfully archived to PostgreSQL database and deleted from active store.',
+      archived: {
+        consignments: 1,
+        skus: skus.length,
+        boxes: boxes.length,
+        videos: videos.length,
+        documents: docs.length,
+        scan_records: scan_records.length
+      }
+    });
+  } catch (error) {
+    console.error('[Archive] Error during archival:', error);
+    res.status(500).json({ error: 'Failed to archive consignment to PostgreSQL.', message: error.message });
   }
 });
 

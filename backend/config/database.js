@@ -17,29 +17,38 @@ let pool = null;
 let enabled = false;
 
 function initPostgres() {
-  const useP = process.env.DB_USE_POSTGRES === 'true' || !!process.env.INSTANCE_CONNECTION_NAME || !!process.env.DB_HOST;
+  const useP = process.env.DB_USE_POSTGRES === 'true' || !!process.env.DATABASE_URL || !!process.env.INSTANCE_CONNECTION_NAME || !!process.env.DB_HOST;
   if (!useP) {
     console.log('[Postgres] Not configured — falling back to Firestore/memory.');
     return;
   }
 
+  const connectionString = process.env.DATABASE_URL;
   const instanceConn = process.env.INSTANCE_CONNECTION_NAME; // e.g. project:region:instance
   const config = {
-    user:     process.env.DB_USER || 'postgres',
-    password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'postgres',
     max: 5,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000,
   };
 
-  if (instanceConn && process.env.NODE_ENV === 'production') {
+  if (connectionString) {
+    config.connectionString = connectionString;
+    if (connectionString.includes('sslmode=require') || process.env.DB_SSL === 'true') {
+      config.ssl = { rejectUnauthorized: false };
+    }
+  } else if (instanceConn && process.env.NODE_ENV === 'production') {
     // Cloud Run mounts the Cloud SQL socket here when --add-cloudsql-instances is set
     config.host = `/cloudsql/${instanceConn}`;
+    config.user = process.env.DB_USER || 'postgres';
+    config.password = process.env.DB_PASSWORD || '';
+    config.database = process.env.DB_NAME || 'postgres';
   } else {
-    // Local dev (Cloud SQL Auth Proxy) or direct public IP
+    // Local dev or direct connection
     config.host = process.env.DB_HOST || '127.0.0.1';
     config.port = parseInt(process.env.DB_PORT || '5432', 10);
+    config.user = process.env.DB_USER || 'postgres';
+    config.password = process.env.DB_PASSWORD || '';
+    config.database = process.env.DB_NAME || 'postgres';
     if (process.env.DB_SSL === 'true') config.ssl = { rejectUnauthorized: false };
   }
 
