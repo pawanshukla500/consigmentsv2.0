@@ -32,8 +32,12 @@ function initPostgres() {
   };
 
   if (connectionString) {
-    config.connectionString = connectionString;
-    if (connectionString.includes('sslmode=require') || process.env.DB_SSL === 'true') {
+    // Strip query parameters (like ?sslmode=require) so pg's internal URI parser
+    // does not override or conflict with our config.ssl settings
+    const urlWithoutQuery = connectionString.split('?')[0];
+    config.connectionString = urlWithoutQuery;
+    
+    if (connectionString.includes('sslmode=') || process.env.DB_SSL === 'true') {
       config.ssl = { rejectUnauthorized: false };
     }
   } else if (instanceConn && process.env.NODE_ENV === 'production') {

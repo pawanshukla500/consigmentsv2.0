@@ -3,6 +3,46 @@ const router = express.Router();
 const { authenticateToken } = require('../middleware/auth');
 const { generateId, now, addAuditLog, firestoreHelpers } = require('../utils/helpers');
 
+// Helper to ensure 1 box has exactly 1 video. Overwrites/deletes old videos for the same box.
+async function ensureSingleVideoPerBox(consignmentId, boxNo) {
+  if (!consignmentId || !boxNo) return;
+  try {
+    const existingVideos = await firestoreHelpers.queryCollection('videos', 'consignmentId', '==', consignmentId);
+    const matchBoxNo = String(boxNo);
+    const videosToDelete = existingVideos.filter(v => String(v.boxNo) === matchBoxNo);
+    if (videosToDelete.length === 0) return;
+
+    const { bucket } = require('../config/firebase');
+    for (const oldVideo of videosToDelete) {
+      // 1. Delete from Firebase Storage
+      if (bucket && oldVideo.firebasePath) {
+        try {
+          await bucket.file(oldVideo.firebasePath).delete();
+          console.log(`[Upload] Deleted old storage video for Box #${boxNo}: ${oldVideo.firebasePath}`);
+        } catch (err) {
+          console.warn('[Upload] Failed to delete old storage file:', err.message);
+        }
+      }
+      // 2. Delete from database
+      await firestoreHelpers.deleteDocument('videos', oldVideo.id);
+      console.log(`[Upload] Deleted old DB video record for Box #${boxNo}: ${oldVideo.id}`);
+      
+      // 3. Remove from consignment's videoIds
+      const consignment = await firestoreHelpers.getDocument('consignments', consignmentId);
+      if (consignment && consignment.videoIds) {
+        const filteredVideoIds = (consignment.videoIds || []).filter(id => id !== oldVideo.id);
+        await firestoreHelpers.setDocument('consignments', consignmentId, {
+          ...consignment,
+          videoIds: filteredVideoIds,
+          updatedAt: now()
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('[Upload] Error ensuring single video per box:', err.message);
+  }
+}
+
 // Save file metadata (files are uploaded directly to Firebase Storage from frontend)
 router.post('/metadata', authenticateToken, async (req, res) => {
   try {
@@ -28,6 +68,10 @@ router.post('/metadata', authenticateToken, async (req, res) => {
       uploadedBy: req.user.id,
       uploadedByName: req.user.name || req.user.email
     };
+
+    if (type === 'video' && boxNo) {
+      await ensureSingleVideoPerBox(consignmentId, boxNo);
+    }
 
     const collectionName = type === 'video' ? 'videos' : 'documents';
     await firestoreHelpers.setDocument(collectionName, fileId, fileRecord);
@@ -152,6 +196,10 @@ router.post('/', authenticateToken, upload.single('file'), async (req, res) => {
       uploadedBy: req.user.id,
       uploadedByName: req.user.name || req.user.email
     };
+
+    if (type === 'video' && boxNo) {
+      await ensureSingleVideoPerBox(consignmentId, boxNo);
+    }
 
     const collectionName = type === 'video' ? 'videos' : 'documents';
     await firestoreHelpers.setDocument(collectionName, fileId, fileRecord);
