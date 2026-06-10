@@ -7,13 +7,13 @@ import { getStorage } from 'firebase/storage';
 // They only identify the Firebase project; real security is enforced by
 // Firebase Security Rules. Hardcoded so the production bundle always works.
 const firebaseConfig = {
-  apiKey:            "AIzaSyAgrDquv5-Rw6JAxFpzGnnGxCHfMhpMHdg",
-  authDomain:        "consignment-packing-app.firebaseapp.com",
-  projectId:         "consignment-packing-app",
-  storageBucket:     "consignment-packing-app.firebasestorage.app",
-  messagingSenderId: "421273083514",
-  appId:             "1:421273083514:web:db136d87850397985725c3",
-  measurementId:     "G-KEKJSPSD43"
+  apiKey:            import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyAgrDquv5-Rw6JAxFpzGnnGxCHfMhpMHdg",
+  authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "consignment-packing-app.firebaseapp.com",
+  projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID || "consignment-packing-app",
+  storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "consignment-packing-app.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "421273083514",
+  appId:             import.meta.env.VITE_FIREBASE_APP_ID || "1:421273083514:web:db136d87850397985725c3",
+  measurementId:     import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-KEKJSPSD43"
 };
 
 const app = initializeApp(firebaseConfig);
