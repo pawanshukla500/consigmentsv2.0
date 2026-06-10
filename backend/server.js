@@ -10,7 +10,49 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware
-app.use(helmet());
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        connectSrc: [
+          "'self'",
+          "https://*.googleapis.com",
+          "https://*.firebaseapp.com",
+          "https://*.firebasestorage.app",
+          "https://*.firebaseio.com",
+          "https://identitytoolkit.googleapis.com",
+          "https://securetoken.googleapis.com"
+        ],
+        scriptSrc: [
+          "'self'",
+          "'unsafe-inline'",
+          "'unsafe-eval'",
+          "https://apis.google.com"
+        ],
+        imgSrc: [
+          "'self'",
+          "data:",
+          "blob:",
+          "https://*.googleapis.com",
+          "https://*.firebasestorage.app",
+          "https://*.googleusercontent.com"
+        ],
+        mediaSrc: [
+          "'self'",
+          "blob:",
+          "https://*.googleapis.com",
+          "https://*.firebasestorage.app"
+        ],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com"],
+        objectSrc: ["'none'"],
+        upgradeInsecureRequests: []
+      }
+    },
+    crossOriginEmbedderPolicy: false
+  })
+);
 app.use(compression());
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
