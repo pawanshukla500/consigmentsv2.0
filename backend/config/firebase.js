@@ -23,6 +23,18 @@ function validateServiceAccount(key) {
 
 function loadServiceAccount() {
   try {
+    // Check for inline JSON environment variable
+    if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+      try {
+        const key = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+        if (validateServiceAccount(key)) {
+          return admin.credential.cert(key);
+        }
+      } catch (e) {
+        console.warn('[Firebase] Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON:', e.message);
+      }
+    }
+
     // Check for env-specified credentials file
     if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
       const credPath = path.resolve(process.env.GOOGLE_APPLICATION_CREDENTIALS);

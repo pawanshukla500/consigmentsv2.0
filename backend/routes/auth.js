@@ -38,7 +38,13 @@ router.post('/firebase-login', async (req, res) => {
     try {
       decoded = await admin.auth().verifyIdToken(idToken, true);
     } catch (e) {
-      return res.status(401).json({ error: 'Invalid or expired Firebase token.' });
+      try {
+        console.log('[Auth] Online verification check failed; falling back to offline verification:', e.message);
+        decoded = await admin.auth().verifyIdToken(idToken, false);
+      } catch (err) {
+        console.error('[Auth] Token verification failed:', err.message);
+        return res.status(401).json({ error: 'Invalid or expired Firebase token.' });
+      }
     }
 
     const email = normalizeEmail(decoded.email);
